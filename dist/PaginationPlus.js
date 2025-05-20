@@ -12,7 +12,8 @@ export const PaginationPlus = Extension.create({
             pageGapBorderSize: 1,
             pageBreakBackground: "#ffffff",
             pageHeaderHeight: 10,
-            footerText: ""
+            footerText: "",
+            headerText: "",
         };
     },
     onCreate() {
@@ -31,16 +32,25 @@ export const PaginationPlus = Extension.create({
         counter-increment: page-number;
       }
       .rm-with-pagination .rm-page-footer::before {
-        content: counter(page-number); 
+        content: "${this.options.footerText} " counter(page-number); 
         position: absolute;
-        right: 25px;
+        left: 50%;
+        transform: translateX(-50%);
         top: 5px;
       }
-      .rm-with-pagination .rm-page-footer::after {
-        content: "${this.options.footerText}"; 
-        position: absolute;
-        left: 25px;
-        top: 5px;
+      .rm-with-pagination .rm-page-footer {
+        font-size: 0.8em;
+        color: #333;
+      }
+      .rm-with-pagination .rm-page-header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 0 25px;
+        font-size: 0.8em;
+        color: #333;
+        margin-top: 48px;
       }
       .rm-with-pagination .rm-page-break.last-page ~ .rm-page-break {
         display: none;
@@ -66,6 +76,7 @@ export const PaginationPlus = Extension.create({
       }
       .rm-with-pagination table tbody{
         display: table;
+        max-height: 300px;
         overflow-y: auto;
       }
       .rm-with-pagination table tbody > tr{
@@ -216,6 +227,7 @@ function createDecoration(state, pageOptions) {
             const pageHeader = document.createElement("div");
             pageHeader.classList.add("rm-page-header");
             pageHeader.style.height = _pageHeaderHeight + "px";
+            pageHeader.textContent = pageOptions.headerText;
             pageBreak.append(pageFooter, pageSpace, pageHeader);
             pageContainer.append(page, pageBreak);
             return pageContainer;
@@ -238,9 +250,12 @@ function createDecoration(state, pageOptions) {
         el.id = "pages";
         return el;
     }, { side: -1 });
-    const firstHeaderWidget = Decoration.widget(0, () => {
+    const firstHeaderWidget = Decoration.widget(0, (view) => {
         const el = document.createElement("div");
+        el.classList.add("rm-page-header");
         el.style.height = `${pageOptions.pageHeaderHeight}px`;
+        el.textContent = pageOptions.headerText;
+        el.style.marginTop = '0px';
         return el;
     }, { side: -1 });
     const lastFooterWidget = Decoration.widget(state.doc.content.size, () => {
