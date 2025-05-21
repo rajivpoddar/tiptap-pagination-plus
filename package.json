@@ -7,7 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "watch": "tsc-watch --onSuccess \"echo 'Build completed'\""
+    "watch": "tsc-watch --onSuccess \"npm run build\""
   },
   "keywords": ["tiptap", "table", "duplicate", "column", "row", "pagination"],
   "author": "Romik Makavana",
