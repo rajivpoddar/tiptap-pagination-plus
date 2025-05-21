@@ -94,44 +94,101 @@ export const PaginationPlus = Extension.create({
         document.head.appendChild(style);
         const _pageGap = this.options.pageGap;
         const _pageGapBorderSize = this.options.pageGapBorderSize;
-        const refreshPage = (targetNode) => {
-            const target = Array.from(targetNode.children).find((child) => child.id === "pages");
-            if (!target)
+        const updateEditorHeight = (node, currentPacetops, currentMaxPageVal // Renamed from _maxPage to avoid confusion with outer scope if any
+        ) => {
+            // const calculatedPageContentHeight = this.options.pageHeight - (this.options.pageHeaderHeight * 2);
+            if (currentMaxPageVal > 0 && currentPacetops.length >= currentMaxPageVal && currentPacetops[currentMaxPageVal - 1] !== Infinity) {
+                const lastPageFooterStartOffset = currentPacetops[currentMaxPageVal - 1];
+                const requiredHeight = lastPageFooterStartOffset; // User confirmed this formula works
+                node.style.height = `${requiredHeight}px`;
+            }
+            else if (currentMaxPageVal === 1) {
+                const requiredHeight = this.options.pageHeight + this.options.pageHeaderHeight;
+                node.style.height = `${requiredHeight}px`;
+            }
+            else {
+                const fallbackHeight = (currentMaxPageVal * this.options.pageHeight) + (Math.max(0, currentMaxPageVal - 1) * this.options.pageGap);
+                node.style.height = `${fallbackHeight}px`;
+            }
+        };
+        const refreshPage = (nodeToRefresh) => {
+            const pagesWidgetContainer = Array.from(nodeToRefresh.children).find((child) => child.id === "pages");
+            if (!pagesWidgetContainer) {
                 return;
-            const pageElements = [...target.querySelectorAll(".page")];
-            const contentElements = [...targetNode.children];
-            const pageTops = pageElements.map((el) => el.offsetTop).filter((top) => top !== 0);
+            }
+            const pageElements = [...pagesWidgetContainer.querySelectorAll(".page")];
+            const contentElements = [...nodeToRefresh.children];
+            // pageTops should be relative to targetNode (editor.view.dom)
+            const pageData = pageElements.map((el) => ({
+                absoluteTop: pagesWidgetContainer.offsetTop + el.offsetTop,
+                relativeTop: el.offsetTop,
+            }));
+            const pageTops = pageData
+                .filter(data => data.absoluteTop !== pagesWidgetContainer.offsetTop || data.relativeTop === 0)
+                .map(data => data.absoluteTop);
             pageTops.push(Infinity); // to simplify range check for last page
             const pagesWithContent = new Set();
-            for (let i = 2; i < (contentElements.length - 1); i++) {
-                const top = contentElements[i].offsetTop;
-                for (let i = 0; i < pageTops.length - 1; i++) {
-                    if (top >= pageTops[i] && top < pageTops[i + 1]) {
-                        pagesWithContent.add(i + 1); // page index starting from 1
+            // contentElements[0] is div#pages (all page breaks widget)
+            // contentElements[1] is the firstHeaderWidget
+            // contentElements[contentElements.length - 1] is the lastFooterWidget
+            // So, actual content nodes are from index 2 to contentElements.length - 2
+            for (let i = 2; i < contentElements.length - 1; i++) {
+                const contentElement = contentElements[i];
+                // Ensure we are not trying to get offsetTop of a widget that might be display:none or similar
+                if (!contentElement || !(contentElement instanceof HTMLElement)) {
+                    continue;
+                }
+                const top = contentElement.offsetTop;
+                let foundPage = false;
+                for (let j = 0; j < pageTops.length - 1; j++) {
+                    if (top >= pageTops[j] && top < pageTops[j + 1]) {
+                        pagesWithContent.add(j + 1); // page index starting from 1
+                        foundPage = true;
                         break;
                     }
                 }
             }
             const maxPage = pagesWithContent.size > 0 ? Math.max(...Array.from(pagesWithContent)) : 0;
-            const _maxPage = maxPage + 2;
-            targetNode.style.minHeight = `${(_maxPage * this.options.pageHeight) +
-                ((_maxPage - 1) * (_pageGap + (2 * _pageGapBorderSize)))}px`;
-            if (maxPage + 1 in target.children) {
-                target.children[maxPage + 1].classList.add('last-page');
+            const _maxPageForLogic = maxPage + 1;
+            updateEditorHeight(nodeToRefresh, pageTops, _maxPageForLogic);
+            // Apply last-page class (using pagesWidgetContainer)
+            if (_maxPageForLogic > 0 && pagesWidgetContainer && (_maxPageForLogic - 1) in pagesWidgetContainer.children) {
+                // Clear last-page from any other element first
+                for (let i = 0; i < pagesWidgetContainer.children.length; i++) {
+                    pagesWidgetContainer.children[i].classList.remove('last-page');
+                }
+                pagesWidgetContainer.children[_maxPageForLogic - 1].classList.add('last-page');
+            }
+            else if (pagesWidgetContainer && pagesWidgetContainer.children.length > 0 && _maxPageForLogic === 0) {
+                // This case should ideally not happen if createDecoration always adds pages
+                // but as a fallback, if no pages are to be shown, mark the first one as last.
+                for (let i = 0; i < pagesWidgetContainer.children.length; i++) {
+                    pagesWidgetContainer.children[i].classList.remove('last-page');
+                }
+                pagesWidgetContainer.children[0].classList.add('last-page');
             }
         };
         const callback = (mutationList, observer) => {
             if (mutationList.length > 0 && mutationList[0].target) {
                 const _target = mutationList[0].target;
                 if (_target.classList.contains("rm-with-pagination")) {
-                    refreshPage(_target);
+                    // Debounce refreshPage calls from the mutation observer
+                    if (this.editor.storage.paginationRefreshTimeout) {
+                        clearTimeout(this.editor.storage.paginationRefreshTimeout);
+                    }
+                    this.editor.storage.paginationRefreshTimeout = setTimeout(() => {
+                        refreshPage(_target);
+                    }, 300); // Debounce/delay increased to 300ms
                 }
             }
         };
         const observer = new MutationObserver(callback);
         observer.observe(targetNode, config);
-        refreshPage(targetNode);
         this.editor.view.dispatch(this.editor.view.state.tr.setMeta(pagination_meta_key, true));
+        // Early call to refreshPage for FOUC mitigation
+        setTimeout(() => {
+            refreshPage(targetNode);
+        }, 0);
     },
     addProseMirrorPlugins() {
         const pageOptions = this.options;
@@ -163,7 +220,7 @@ export const PaginationPlus = Extension.create({
 });
 function createDecoration(state, pageOptions) {
     const pageWidget = Decoration.widget(0, (view) => {
-        const _extraPages = 5;
+        const _extraPages = 1;
         const _pageGap = pageOptions.pageGap;
         const _pageHeaderHeight = pageOptions.pageHeaderHeight;
         const _pageHeight = pageOptions.pageHeight - (_pageHeaderHeight * 2);
