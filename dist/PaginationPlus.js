@@ -40,7 +40,7 @@ export const PaginationPlus = Extension.create({
       }
       .rm-with-pagination .rm-page-footer {
         font-size: 0.8em;
-        color: #333;
+        color: #7c7c7c;
       }
       .rm-with-pagination .rm-page-header {
         display: flex;
@@ -49,7 +49,7 @@ export const PaginationPlus = Extension.create({
         height: 100%;
         padding: 0 25px;
         font-size: 0.8em;
-        color: #333;
+        color: #7c7c7c;
         margin-top: 48px;
       }
       .rm-with-pagination .rm-page-break.last-page ~ .rm-page-break {
