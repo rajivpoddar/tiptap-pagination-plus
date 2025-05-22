@@ -14,6 +14,7 @@ export const PaginationPlus = Extension.create({
             pageHeaderHeight: 10,
             footerText: "",
             headerText: "",
+            onReady: undefined,
         };
     },
     onCreate() {
@@ -185,10 +186,12 @@ export const PaginationPlus = Extension.create({
         const observer = new MutationObserver(callback);
         observer.observe(targetNode, config);
         this.editor.view.dispatch(this.editor.view.state.tr.setMeta(pagination_meta_key, true));
-        // Early call to refreshPage for FOUC mitigation
-        setTimeout(() => {
+        requestAnimationFrame(() => {
             refreshPage(targetNode);
-        }, 0);
+            if (this.options.onReady) {
+                this.options.onReady();
+            }
+        });
     },
     addProseMirrorPlugins() {
         const pageOptions = this.options;

@@ -7,6 +7,7 @@ interface PaginationPlusOptions {
     pageGapBorderSize: number;
     footerText: string;
     headerText: string;
+    onReady?: () => void;
 }
 export declare const PaginationPlus: Extension<PaginationPlusOptions, any>;
 export {};

@@ -11,6 +11,7 @@ interface PaginationPlusOptions {
   pageGapBorderSize: number;
   footerText: string;
   headerText: string;
+  onReady?: () => void;
 }
 const pagination_meta_key = "PAGINATION_META_KEY";
 export const PaginationPlus = Extension.create<PaginationPlusOptions>({
@@ -24,11 +25,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       pageHeaderHeight: 10,
       footerText: "",
       headerText: "",
+      onReady: undefined,
     };
   },
   onCreate() {
     const targetNode = this.editor.view.dom as HTMLElement;
     targetNode.classList.add("rm-with-pagination");
+
     const config = { attributes: true };
     const _pageHeaderHeight = this.options.pageHeaderHeight;
     const _pageHeight = this.options.pageHeight - (_pageHeaderHeight * 2);
@@ -217,10 +220,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       this.editor.view.state.tr.setMeta(pagination_meta_key, true)
     );
 
-    // Early call to refreshPage for FOUC mitigation
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       refreshPage(targetNode);
-    }, 0);
+
+      if (this.options.onReady) {
+        this.options.onReady();
+      }
+    });
   },
   addProseMirrorPlugins() {
     const pageOptions = this.options;
@@ -235,7 +241,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           },
           apply(tr, oldDeco, oldState, newState) {
             // Recalculate only on doc changes
-
             if (tr.docChanged || tr.getMeta(pagination_meta_key)) {
               const widgetList = createDecoration(newState, pageOptions);
               return DecorationSet.create(newState.doc, [...widgetList]);
