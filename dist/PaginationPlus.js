@@ -53,7 +53,8 @@ export const PaginationPlus = Extension.create({
         color: #7c7c7c;
         margin-top: 48px;
       }
-      .rm-with-pagination .rm-page-break.last-page ~ .rm-page-break {
+      .rm-with-pagination .rm-page-break.last-page ~ .rm-page-break,
+      .rm-with-pagination .rm-page-break.hidden {
         display: none;
       }
       .rm-with-pagination .rm-page-break.last-page .rm-pagination-gap {
@@ -173,13 +174,13 @@ export const PaginationPlus = Extension.create({
             if (mutationList.length > 0 && mutationList[0].target) {
                 const _target = mutationList[0].target;
                 if (_target.classList.contains("rm-with-pagination")) {
-                    // Debounce refreshPage calls from the mutation observer
-                    if (this.editor.storage.paginationRefreshTimeout) {
-                        clearTimeout(this.editor.storage.paginationRefreshTimeout);
+                    // Use requestAnimationFrame for throttling instead of setTimeout
+                    if (this.editor.storage.paginationRefreshFrame) {
+                        cancelAnimationFrame(this.editor.storage.paginationRefreshFrame);
                     }
-                    this.editor.storage.paginationRefreshTimeout = setTimeout(() => {
+                    this.editor.storage.paginationRefreshFrame = requestAnimationFrame(() => {
                         refreshPage(_target);
-                    }, 300); // Debounce/delay increased to 300ms
+                    });
                 }
             }
         };
@@ -251,6 +252,9 @@ function createDecoration(state, pageOptions) {
         const pageBreakDefinition = ({ firstPage = false, lastPage = false, }) => {
             const pageContainer = document.createElement("div");
             pageContainer.classList.add("rm-page-break");
+            if (lastPage) {
+                pageContainer.classList.add("last-page");
+            }
             const page = document.createElement("div");
             page.classList.add("page");
             page.style.position = "relative";
@@ -303,7 +307,9 @@ function createDecoration(state, pageOptions) {
                 fragment.appendChild(firstPage.cloneNode(true));
             }
             else {
-                fragment.appendChild(page.cloneNode(true));
+                // Mark the last page during creation
+                const isLastPage = i === pages + _extraPages - 1;
+                fragment.appendChild(pageBreakDefinition({ firstPage: false, lastPage: isLastPage }));
             }
         }
         el.append(fragment);
