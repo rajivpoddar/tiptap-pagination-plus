@@ -280,7 +280,7 @@ function createDecoration(
         totalHeight += childElements[i].scrollHeight;
       }
 
-      const paginationElement = document.querySelector("[data-rm-pagination]");
+      const paginationElement = view.dom.querySelector("[data-rm-pagination]");
 
       let previousPageCount = paginationElement
         ? paginationElement.children.length
