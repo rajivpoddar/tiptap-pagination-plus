@@ -289,9 +289,31 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         }
       }
 
-      // If we have multiple nodes, assume content
-      if (contentNodes > 1 && !hasRealContent) {
-        hasRealContent = true;
+      // Better content detection: only count nodes with actual content or visual elements
+      // Don't assume content just because there are multiple empty nodes
+      if (!hasRealContent && contentNodes > 0) {
+        // Check if any of the content elements actually have meaningful content
+        for (let i = startIndex; i < contentElements.length; i++) {
+          const contentElement = contentElements[i] as HTMLElement;
+          if (!contentElement) continue;
+          
+          // Skip decoration elements
+          if (contentElement.classList.contains('rm-page-header') || 
+              contentElement.classList.contains('rm-page-footer') ||
+              contentElement.classList.contains('rm-page-break')) {
+            continue;
+          }
+          
+          // Check for actual content (not just empty paragraphs with line breaks)
+          const hasText = contentElement.textContent?.trim();
+          const hasVisualElements = contentElement.querySelector('img, table, hr, blockquote, [class*="node"]:not([class*="ProseMirror-trailingBreak"])');
+          const hasNonEmptyParagraphs = contentElement.tagName === 'P' && hasText;
+          
+          if (hasText || hasVisualElements || hasNonEmptyParagraphs) {
+            hasRealContent = true;
+            break;
+          }
+        }
       }
 
       // Calculate required pages based on cumulative height
@@ -320,10 +342,19 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         requiredPages = Math.min(requiredPages, Math.max(calculatedPages, 1));
       }
 
-      // Only recalculate if content height changed significantly
-      if (Math.abs(totalContentHeight - this.storage.lastContentHeight) < 5 && 
-          this.storage.lastPageCount === pageElements.length) {
+      // Special handling for when content becomes empty - force recalculation
+      const contentBecameEmpty = !hasRealContent && totalContentHeight === 0;
+      const significantChange = Math.abs(totalContentHeight - this.storage.lastContentHeight) >= 5;
+      const pageCountChanged = this.storage.lastPageCount !== pageElements.length;
+      
+      // Only skip recalculation if no significant changes AND content is not empty
+      if (!contentBecameEmpty && !significantChange && !pageCountChanged) {
         return; // No significant changes
+      }
+      
+      // Clear cached page count when content becomes empty
+      if (contentBecameEmpty) {
+        this.storage.correctPageCount = 1;
       }
       
       this.storage.lastContentHeight = totalContentHeight;
@@ -464,11 +495,22 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             return DecorationSet.create(state.doc, widgetList);
           },
           apply(tr, oldDeco, oldState, newState) {
-            // Only recalculate on significant changes
-            const sizeChanged = Math.abs(newState.doc.content.size - lastDocSize) > 10;
+            // Calculate size change
+            const sizeDiff = newState.doc.content.size - lastDocSize;
+            const sizeChanged = Math.abs(sizeDiff) > 10;
             
-            if (tr.docChanged && sizeChanged || tr.getMeta(pagination_meta_key)) {
+            // More sensitive detection for large deletions (like select-all-delete)
+            const largeContentRemoval = sizeDiff < -50 || newState.doc.content.size < 20;
+            
+            if (tr.docChanged && (sizeChanged || largeContentRemoval) || tr.getMeta(pagination_meta_key)) {
               lastDocSize = newState.doc.content.size;
+              
+              // Force clear cached page count on large deletions
+              if (largeContentRemoval && extensionStorage) {
+                extensionStorage.correctPageCount = 1;
+                extensionStorage.lastContentHeight = 0;
+              }
+              
               const widgetList = createDecoration(newState, pageOptions, extensionStorage);
               return DecorationSet.create(newState.doc, [...widgetList]);
             }
@@ -513,6 +555,7 @@ function createDecoration(
         const effectivePageHeight = pageOptions.pageHeight - (pageOptions.pageHeaderHeight * 2);
         const childElements = view.dom.children;
         let totalHeight = 0;
+        let hasRealContent = false;
         const heights: number[] = [];
 
         // Use same element selection logic as refreshPage
@@ -560,6 +603,14 @@ function createDecoration(
             heights.push(height);
             totalHeight += height;
           }
+          
+          // Check for actual content
+          if (!hasRealContent && (
+            element.textContent?.trim() || 
+            element.querySelector('img, table, hr, blockquote, [class*="node"]:not([class*="ProseMirror-trailingBreak"])')
+          )) {
+            hasRealContent = true;
+          }
         }
 
         // Calculate pages using same algorithm as refreshPage (no 95% threshold)
@@ -575,8 +626,8 @@ function createDecoration(
           }
         }
         
-        // Don't create extra pages if there's no content
-        if (totalHeight === 0) {
+        // Don't create extra pages if there's no real content
+        if (!hasRealContent || totalHeight === 0) {
           pages = 1;
         } else {
           // Use a more accurate calculation to avoid extra pages
