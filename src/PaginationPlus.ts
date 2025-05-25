@@ -1,6 +1,6 @@
 // OptimizedPagination.ts
 import { Extension } from "@tiptap/core";
-import { EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
+import { EditorState, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 interface PaginationPlusOptions {
@@ -41,6 +41,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       isInitialized: false,
       calculatePaginatedHeight: null as ((pageCount: number) => number) | null,
       calculatePageCount: null as ((naturalHeight: number) => number) | null,
+      // Position preservation
+      savedCursorPos: -1,
+      savedScrollTop: 0,
+      savedScrollLeft: 0,
+      positionSaved: false,
     };
   },
   
@@ -273,7 +278,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Main measurement function
     const measureAndUpdatePages = (callback?: () => void) => {
-      // Clean measurement start
+      // Save positions if not already saved
+      if (!this.storage.positionSaved) {
+        this.storage.savedCursorPos = this.editor.state.selection.from;
+        this.storage.savedScrollTop = targetNode.scrollTop;
+        this.storage.savedScrollLeft = targetNode.scrollLeft;
+        this.storage.positionSaved = true;
+      }
+      
+      // Use saved positions for restoration
+      const savedCursorPos = this.storage.savedCursorPos;
+      const savedScrollTop = this.storage.savedScrollTop;
+      const savedScrollLeft = this.storage.savedScrollLeft;
       
       // Temporarily set to auto height for natural measurement
       targetNode.style.height = 'auto';
@@ -308,8 +324,27 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               new Promise(resolve => setTimeout(resolve, 16)) // One frame
             ]);
             
-            // Now measure - content should be fully settled
+            // Hide pagination decorations temporarily to measure only content
+            const paginationElements = targetNode.querySelectorAll('[data-rm-pagination]');
+            const originalDisplay: string[] = [];
+            
+            paginationElements.forEach((el, index) => {
+              const element = el as HTMLElement;
+              originalDisplay[index] = element.style.display;
+              element.style.display = 'none';
+            });
+            
+            // Force layout reflow after hiding decorations
+            targetNode.offsetHeight;
+            
+            // Now measure - content should be fully settled WITHOUT decorations
             const naturalHeight = targetNode.scrollHeight;
+            
+            // Restore pagination decorations
+            paginationElements.forEach((el, index) => {
+              const element = el as HTMLElement;
+              element.style.display = originalDisplay[index];
+            });
           
           // Check for layout issues
           
@@ -434,9 +469,31 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             }
           }
           
+          // Restore cursor and scroll position
+          requestAnimationFrame(() => {
+            // Restore scroll position
+            targetNode.scrollTop = savedScrollTop;
+            targetNode.scrollLeft = savedScrollLeft;
+            
+            // Restore cursor position
+            if (savedCursorPos >= 0) {
+              try {
+                const clampedPos = Math.min(savedCursorPos, this.editor.state.doc.content.size);
+                const selection = TextSelection.create(this.editor.state.doc, clampedPos);
+                const tr = this.editor.state.tr.setSelection(selection);
+                this.editor.view.dispatch(tr);
+              } catch (e) {
+                // If cursor position is invalid, don't restore
+              }
+            }
+            
+            // Reset flags
+            this.storage.positionSaved = false;
+            
             if (callback) {
               callback();
             }
+          });
           };
           
           // Call the async measurement function
@@ -450,6 +507,17 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Debounced remeasure function for content changes
     const remeasureContent = (delay: number = 100) => {
+      // CAPTURE POSITION IMMEDIATELY when user types (not later in timer)
+      const currentCursor = this.editor.state.selection.from;
+      const currentScroll = targetNode.scrollTop;
+      const currentScrollLeft = targetNode.scrollLeft;
+      
+      // Always update to the latest position during typing
+      this.storage.savedCursorPos = currentCursor;
+      this.storage.savedScrollTop = currentScroll;
+      this.storage.savedScrollLeft = currentScrollLeft;
+      this.storage.positionSaved = true;
+      
       if (this.storage.remeasureTimer) {
         clearTimeout(this.storage.remeasureTimer);
       }
@@ -567,11 +635,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               
               // Handle normal content changes after initialization
               if (sizeChanged && !isLargePaste && !isLargeDeletion && extensionStorage.isInitialized) {
-                extensionStorage.remeasureContent(200);
+                extensionStorage.remeasureContent(300);
               }
             }
             
-            if (tr.docChanged && (sizeChanged || isLargeDeletion) || tr.getMeta(pagination_meta_key)) {
+            // Only update decorations for large deletions or explicit pagination updates (not normal typing)
+            if ((tr.docChanged && isLargeDeletion) || tr.getMeta(pagination_meta_key)) {
               lastDocSize = newState.doc.content.size;
               
               console.log('🔄 Updating decorations');
