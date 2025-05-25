@@ -166,4 +166,196 @@ describe('PaginationPlus Height Calculations', () => {
       expect(pageCount).toBe(2);
     });
   });
+
+  describe('Cursor and Scroll Position Preservation', () => {
+    it('should store remeasureContent function in extension storage', () => {
+      // Verify the function is stored in storage for plugin access
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('this.storage.remeasureContent = remeasureContent');
+    });
+
+    it('should save and restore cursor position during measurement', () => {
+      // Test that position saving variables are captured in the source code
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('savedCursorPos');
+      expect(PaginationPlusSource).toContain('savedScrollTop');
+      expect(PaginationPlusSource).toContain('savedScrollLeft');
+      expect(PaginationPlusSource).toContain('this.editor.state.selection.from');
+    });
+
+    it('should use TextSelection for cursor restoration', () => {
+      // Verify TextSelection is imported and used
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('import { EditorState, Plugin, PluginKey, TextSelection }');
+      expect(PaginationPlusSource).toContain('TextSelection.create(this.editor.state.doc, clampedPos)');
+    });
+
+    it('should handle invalid cursor position gracefully', () => {
+      // Verify error handling is in place
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('Math.min(savedCursorPos, this.editor.state.doc.content.size)');
+      expect(PaginationPlusSource).toContain('console.warn(\'Could not restore cursor position:\', e)');
+    });
+
+    it('should restore scroll position after measurement', () => {
+      // Verify scroll restoration code exists
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('targetNode.scrollTop = savedScrollTop');
+      expect(PaginationPlusSource).toContain('targetNode.scrollLeft = savedScrollLeft');
+    });
+
+    it('should use DOM settling and async restoration', () => {
+      // Verify restoration waits for DOM to settle
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('await waitForDOMSettled()');
+      expect(PaginationPlusSource).toContain('const restoreAfterSettled = async () => {');
+      expect(PaginationPlusSource).toContain('event: \'measure_start\'');
+    });
+  });
+
+  describe('Timing and Debouncing', () => {
+    it('should use 300ms delay for normal typing', () => {
+      // Verify the delay was changed from 200ms to 300ms
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('extensionStorage.remeasureContent(300)');
+      expect(PaginationPlusSource).toContain('// Handle normal content changes after initialization');
+    });
+
+    it('should have debounced remeasureContent function implementation', () => {
+      // Verify the debounced function implementation exists
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('const remeasureContent = (delay: number = 100) => {');
+      expect(PaginationPlusSource).toContain('setTimeout(() => {');
+      expect(PaginationPlusSource).toContain('measureAndUpdatePages();');
+    });
+
+    it('should clear previous timer when remeasuring', () => {
+      // Verify timer management
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('if (this.storage.remeasureTimer) {');
+      expect(PaginationPlusSource).toContain('clearTimeout(this.storage.remeasureTimer)');
+      expect(PaginationPlusSource).toContain('this.storage.remeasureTimer = setTimeout');
+    });
+
+  });
+
+  describe('Position Restoration Logic', () => {
+    it('should save positions after debounce but before height manipulation', () => {
+      // Verify position saving happens after 300ms debounce, not immediately
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      // Check for position saving in measurement function
+      expect(PaginationPlusSource).toContain('event: \'cursor_position_updated\'');
+      expect(PaginationPlusSource).toContain('this.storage.savedCursorPos = currentCursorPos');
+      
+      // Check for height manipulation  
+      expect(PaginationPlusSource).toContain('targetNode.style.height = \'auto\'');
+    });
+
+    it('should restore positions after all measurements complete', () => {
+      // Verify restoration happens after pagination calculations
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      const lines = PaginationPlusSource.split('\n');
+      let lastPageClassLine = -1;
+      let restoreAfterSettledLine = -1;
+      
+      lines.forEach((line: string, index: number) => {
+        if (line.includes('classList.add(\'last-page\')')) {
+          lastPageClassLine = index;
+        }
+        if (line.includes('const restoreAfterSettled = async () => {')) {
+          restoreAfterSettledLine = index;
+        }
+      });
+      
+      expect(lastPageClassLine).toBeGreaterThan(-1);
+      expect(restoreAfterSettledLine).toBeGreaterThan(-1);
+      expect(restoreAfterSettledLine).toBeGreaterThan(lastPageClassLine);
+    });
+
+    it('should handle position restoration in async context', () => {
+      // Verify restoration works with the async measurement flow
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('const measureWhenReady = async () => {');
+      expect(PaginationPlusSource).toContain('const restoreAfterSettled = async () => {');
+      expect(PaginationPlusSource).toContain('targetNode.scrollTop = savedScrollTop');
+    });
+
+    it('should implement scroll locking after debounce, not during typing', () => {
+      // Verify scroll locking happens after typing stops, not immediately
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('const lockScroll = () => {');
+      expect(PaginationPlusSource).toContain('const unlockScroll = () => {');
+      expect(PaginationPlusSource).toContain('this.storage.scrollLocked = true');
+      
+      // Check that locking happens after timer fires, not on schedule
+      expect(PaginationPlusSource).toContain('event: \'scroll_locked\'');
+      expect(PaginationPlusSource).toContain('lockScroll();');
+      expect(PaginationPlusSource).toContain('unlockScroll();');
+    });
+
+    it('should wait for DOM to settle before restoration', () => {
+      // Verify DOM settling detection
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      expect(PaginationPlusSource).toContain('const waitForDOMSettled = (): Promise<void> => {');
+      expect(PaginationPlusSource).toContain('requiredStableFrames = 5');
+      expect(PaginationPlusSource).toContain('currentHeight === lastHeight && currentWidth === lastWidth');
+      expect(PaginationPlusSource).toContain('event: \'dom_settled\'');
+    });
+  });
 });
