@@ -48,6 +48,23 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       positionSaved: false,
       // Track last measured height to avoid unnecessary updates
       lastMeasuredHeight: 0,
+      // Track stable height measurements
+      stableHeightMeasurements: [] as number[],
+      stableHeightThreshold: 3,
+      // Measurement cancellation token
+      measureToken: 0,
+      currentMeasurePromise: null as Promise<void> | null,
+      // Cleanup tracking
+      cleanups: [] as Array<() => void>,
+      // Flag to prevent cancelling initial measurement
+      isInitialMeasurement: true,
+      // Track child measurements for debugging
+      lastChildCount: 0,
+      lastTotalChildHeight: 0,
+      // Grace period after initial setup
+      initialSetupCompleteTime: 0,
+      // Lock the expected height range for content
+      lockedHeightRange: { min: 0, max: 0 },
     };
   },
   
@@ -78,6 +95,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       .rm-with-pagination .rm-page-footer {
         font-size: 0.8em;
         color: #7c7c7c;
+        position: relative;
+        white-space: nowrap;
+        overflow: hidden;
       }
       .rm-with-pagination .rm-page-header {
         display: flex;
@@ -219,7 +239,14 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           img.addEventListener('error', onLoad);
           
           // Timeout after 5 seconds for broken images
-          setTimeout(onLoad, 5000);
+          const timeoutId = setTimeout(onLoad, 5000);
+          
+          // Track cleanup for proper disposal
+          this.storage.cleanups.push(() => {
+            clearTimeout(timeoutId);
+            img.removeEventListener('load', onLoad);
+            img.removeEventListener('error', onLoad);
+          });
         });
       });
       
@@ -267,10 +294,16 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         observer.observe(container);
         
         // Fallback timeout
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           observer.disconnect();
           resolve();
         }, 1000);
+        
+        // Track cleanup
+        this.storage.cleanups.push(() => {
+          clearTimeout(timeoutId);
+          observer.disconnect();
+        });
       });
     };
 
@@ -278,8 +311,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     this.storage.calculatePaginatedHeight = calculatePaginatedHeight;
     this.storage.calculatePageCount = calculatePageCount;
 
-    // Main measurement function
-    const measureAndUpdatePages = (callback?: () => void) => {
+    // Main measurement function with cancellation support
+    const measureAndUpdatePages = async (callback?: () => void) => {
+      // Increment token to cancel any pending measurements
+      const currentToken = ++this.storage.measureToken;
+      const isInitialMeasurement = this.storage.isInitialMeasurement;
+      
+      console.log('📊 measureAndUpdatePages called:', JSON.stringify({
+        currentToken,
+        isInitialMeasurement,
+        currentPageCount: this.storage.correctPageCount,
+        lastMeasuredHeight: this.storage.lastMeasuredHeight
+      }, null, 2));
       // Save positions if not already saved
       if (!this.storage.positionSaved) {
         this.storage.savedCursorPos = this.editor.state.selection.from;
@@ -297,74 +340,184 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // This prevents both jank AND excessive page creation
       
       // Wait for layout to complete
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          // Use browser APIs to detect when content is truly ready (for all document sizes)
-          const measureWhenReady = async () => {
-            // Force layout reflow first
-            targetNode.offsetHeight;
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      
+      // Check if measurement was cancelled
+      if (currentToken !== this.storage.measureToken && !isInitialMeasurement) {
+        // Only log cancellation after initialization to reduce noise
+        if (this.storage.isInitialized) {
+          // Measurement cancelled (token mismatch)
+        }
+        return;
+      }
+      // Use browser APIs to detect when content is truly ready (for all document sizes)
+      try {
+        // Check if cancelled before proceeding with expensive operations
+        if (currentToken !== this.storage.measureToken && !isInitialMeasurement) return;
             
-            // Wait for all browser APIs to indicate readiness
-            await Promise.all([
-              // 1. Wait for fonts to load
-              document.fonts.ready,
-              
-              // 2. Wait for images to load (if any)
-              waitForImages(targetNode),
-              
-              // 3. Wait for content to be visible (layout complete)
-              waitForContentVisible(targetNode),
-              
-              // 4. Wait for layout to stabilize
-              waitForLayoutStable(targetNode),
-              
-              // 5. Wait for any pending async operations
-              new Promise(resolve => setTimeout(resolve, 16)) // One frame
-            ]);
+        // Wait for all browser APIs to indicate readiness
+        await Promise.all([
+          // 1. Wait for fonts to load
+          document.fonts.ready,
+          
+          // 2. Wait for images to load (if any)
+          waitForImages(targetNode),
+          
+          // 3. Wait for content to be visible (layout complete)
+          waitForContentVisible(targetNode),
+          
+          // 4. Wait for layout to stabilize
+          waitForLayoutStable(targetNode),
+          
+          // 5. Wait for any pending async operations
+          new Promise(resolve => setTimeout(resolve, 16)) // One frame
+        ]);
+        
+        // Check cancellation after async operations
+        if (currentToken !== this.storage.measureToken && !isInitialMeasurement) {
+          if (this.storage.isInitialized) {
+            // Measurement cancelled after content ready
+          }
+          return;
+        }
             
-            // Hide pagination decorations temporarily to measure only content
-            const paginationElements = targetNode.querySelectorAll('[data-rm-pagination]');
-            const originalDisplay: string[] = [];
+            // BATCH READ PHASE: Collect all measurements first
+            const measurements = {
+              // Force a single layout reflow for all reads
+              offsetHeight: targetNode.offsetHeight,
+              paginationElements: [] as Array<{element: HTMLElement, display: string}>,
+              childMeasurements: [] as Array<{height: number, marginTop: number, marginBottom: number}>,
+              containerPadding: { top: 0, bottom: 0 }
+            };
             
-            paginationElements.forEach((el, index) => {
+            // Collect pagination elements info - include ALL pagination-related elements
+            const paginationSelectors = '[data-rm-pagination], .rm-page-header, .rm-page-footer, .rm-page-break';
+            const paginationElements = targetNode.querySelectorAll(paginationSelectors);
+            paginationElements.forEach((el) => {
               const element = el as HTMLElement;
-              originalDisplay[index] = element.style.display;
-              element.style.display = 'none';
+              measurements.paginationElements.push({
+                element,
+                display: element.style.display
+              });
             });
             
-            // Force layout reflow after hiding decorations
-            targetNode.offsetHeight;
-            
-            // Measure actual content height by summing up child heights
-            // This is more accurate than scrollHeight when container has fixed height
-            let contentHeight = 0;
+            // Collect all child measurements in one go
             const children = targetNode.children;
+            const childDetails: Array<{
+              tagName: string;
+              className: string;
+              height: number;
+              marginTop: number;
+              marginBottom: number;
+              totalHeight: number;
+            }> = [];
+            let skippedCount = 0;
+            
+            // First, ensure all pagination elements are truly hidden and measure their original state
+            const paginationHiddenStates = new Map<HTMLElement, string>();
+            const allPaginationElements = targetNode.querySelectorAll('.rm-page-break, .rm-page-header, .rm-page-footer, [data-rm-pagination], #pages');
+            allPaginationElements.forEach(el => {
+              const element = el as HTMLElement;
+              // Store original display state
+              paginationHiddenStates.set(element, element.style.display);
+              // Force hide with visibility hidden to maintain layout but exclude from height
+              element.style.visibility = 'hidden';
+              element.style.position = 'absolute';
+              element.style.top = '-9999px';
+            });
+            
+            // Force layout recalculation after hiding
+            void targetNode.offsetHeight;
             
             for (let i = 0; i < children.length; i++) {
               const child = children[i] as HTMLElement;
               // Skip pagination elements and headers/footers
-              if (!child.dataset.rmPagination && 
-                  !child.classList.contains('rm-page-header') && 
-                  !child.classList.contains('rm-page-footer')) {
-                const rect = child.getBoundingClientRect();
-                const styles = window.getComputedStyle(child);
-                const marginTop = parseFloat(styles.marginTop);
-                const marginBottom = parseFloat(styles.marginBottom);
-                contentHeight += rect.height + marginTop + marginBottom;
+              const isPagination = child.dataset.rmPagination || 
+                  child.classList.contains('rm-page-header') || 
+                  child.classList.contains('rm-page-footer') ||
+                  child.classList.contains('rm-page-break') ||
+                  child.id?.includes('pages') ||
+                  child.classList.contains('ProseMirror-widget') ||
+                  paginationHiddenStates.has(child);
+                  
+              if (isPagination) {
+                skippedCount++;
+                continue;
               }
+              
+              const rect = child.getBoundingClientRect();
+              const styles = window.getComputedStyle(child);
+              const height = rect.height || 0;
+              const marginTop = parseFloat(styles.marginTop) || 0;
+              const marginBottom = parseFloat(styles.marginBottom) || 0;
+              
+              childDetails.push({
+                tagName: child.tagName,
+                className: child.className,
+                height,
+                marginTop,
+                marginBottom,
+                totalHeight: height + marginTop + marginBottom
+              });
+              
+              measurements.childMeasurements.push({
+                height,
+                marginTop,
+                marginBottom
+              });
             }
             
-            // Add container padding
-            const containerStyles = window.getComputedStyle(targetNode);
-            const paddingTop = parseFloat(containerStyles.paddingTop);
-            const paddingBottom = parseFloat(containerStyles.paddingBottom);
-            const naturalHeight = contentHeight + paddingTop + paddingBottom;
+            // Log child details for debugging
+            if (childDetails.length > 0) {
+              console.log('📏 Child measurements:', JSON.stringify({
+              totalChildren: childDetails.length,
+              totalHeight: childDetails.reduce((sum, child) => sum + child.totalHeight, 0),
+              sampleChildren: childDetails.slice(0, 5),
+              largestChild: childDetails.reduce((max, child) => child.height > max.height ? child : max, { height: 0 }),
+              paginationElementsHidden: measurements.paginationElements.length,
+              skippedChildren: skippedCount,
+              allChildrenCount: children.length
+            }, null, 2));
+              
+              // Log full details only if we detect a significant change
+              if (this.storage.lastChildCount && this.storage.lastChildCount === childDetails.length) {
+                const heightDiff = childDetails.reduce((sum, child) => sum + child.totalHeight, 0) - this.storage.lastTotalChildHeight;
+                if (Math.abs(heightDiff) > 100) {
+                  // Significant height change detected
+                }
+              }
+              
+              this.storage.lastChildCount = childDetails.length;
+              this.storage.lastTotalChildHeight = childDetails.reduce((sum, child) => sum + child.totalHeight, 0);
+            }
             
-            // Restore pagination decorations
-            paginationElements.forEach((el, index) => {
-              const element = el as HTMLElement;
-              element.style.display = originalDisplay[index];
+            // Get container padding
+            const containerStyles = window.getComputedStyle(targetNode);
+            measurements.containerPadding.top = parseFloat(containerStyles.paddingTop) || 0;
+            measurements.containerPadding.bottom = parseFloat(containerStyles.paddingBottom) || 0;
+            
+            // Calculate content height from collected measurements
+            let contentHeight = 0;
+            measurements.childMeasurements.forEach(({height, marginTop, marginBottom}) => {
+              contentHeight += height + marginTop + marginBottom;
             });
+            
+            const naturalHeight = contentHeight + measurements.containerPadding.top + measurements.containerPadding.bottom;
+            
+            // Restore pagination elements to their original state
+            paginationHiddenStates.forEach((originalDisplay, element) => {
+              element.style.visibility = '';
+              element.style.position = '';
+              element.style.top = '';
+              element.style.display = originalDisplay;
+            });
+            
+            // Validate naturalHeight
+            if (isNaN(naturalHeight) || naturalHeight <= 0) {
+              console.log('⚠️ Invalid natural height calculated:', naturalHeight);
+              return;
+            }
           
           // Check for layout issues
           
@@ -398,50 +551,149 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           // Use initial calculation for now
           let pageCount = initialPageCount;
           
-          // Check if height has actually changed to avoid unnecessary updates
-          const heightChanged = Math.abs(naturalHeight - this.storage.lastMeasuredHeight) > 5; // 5px tolerance
+          // Track stable height measurements
+          if (this.storage.stableHeightMeasurements.length >= this.storage.stableHeightThreshold) {
+            this.storage.stableHeightMeasurements.shift();
+          }
+          this.storage.stableHeightMeasurements.push(naturalHeight);
           
-          if (heightChanged) {
+          // Check if height is stable (all recent measurements within 5px)
+          const isHeightStable = this.storage.stableHeightMeasurements.length >= this.storage.stableHeightThreshold &&
+            Math.max(...this.storage.stableHeightMeasurements) - Math.min(...this.storage.stableHeightMeasurements) <= 5;
+          
+          console.log('📐 Measurement results:', JSON.stringify({
+            naturalHeight,
+            adjustedHeight,
+            contentPerPage,
+            pageCount,
+            expectedFor9Pages: (9 - 1) * contentPerPage + 148,
+            difference: naturalHeight - ((9 - 1) * contentPerPage + 148),
+            shouldBe9Pages: adjustedHeight <= (9 - 1) * contentPerPage,
+            lockedRange: this.storage.lockedHeightRange,
+            withinRange: naturalHeight >= this.storage.lockedHeightRange.min && naturalHeight <= this.storage.lockedHeightRange.max,
+            stableHeightMeasurements: this.storage.stableHeightMeasurements,
+            isHeightStable
+          }, null, 2));
+          
+          console.log('🔢 Page calculation:', JSON.stringify({
+            isInitialMeasurement,
+            currentCorrectPageCount: this.storage.correctPageCount,
+            calculatedPageCount: pageCount,
+            willUpdate: isInitialMeasurement && this.storage.correctPageCount === 1 && pageCount > 1
+          }, null, 2));
+          
+          // For initial measurement, always accept the first valid measurement
+          // This prevents the issue where content changes size after decorations are added
+          if (isInitialMeasurement && this.storage.correctPageCount === 1 && pageCount > 1) {
+            console.log('🎯 Initial measurement locked in:', JSON.stringify({
+              pageCount,
+              naturalHeight
+            }, null, 2));
+            this.storage.correctPageCount = pageCount;
             this.storage.lastMeasuredHeight = naturalHeight;
+            // Lock in an acceptable height range (±0.5 page tolerance)
+            // Tighter tolerance to prevent unnecessary page count changes
+            const tolerance = contentPerPage * 0.5; // Allow 0.5 page worth of variation
+            this.storage.lockedHeightRange = {
+              min: naturalHeight - tolerance,
+              max: naturalHeight + tolerance
+            };
             
-            // Update page count if changed
-            if (pageCount !== this.storage.correctPageCount) {
-              this.storage.correctPageCount = pageCount;
+            // Trigger decoration update
+            this.editor.view.dispatch(
+              this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+            );
+          } else if (!this.storage.isInitialMeasurement) {
+            // Only update page count after initial setup is complete
+            const timeSinceSetup = this.storage.initialSetupCompleteTime ? Date.now() - this.storage.initialSetupCompleteTime : Infinity;
+            const inGracePeriod = timeSinceSetup < 500;
+            
+            if (inGracePeriod) {
+              console.log('🚫 Skipping update during grace period:', JSON.stringify({
+                timeSinceSetup,
+                wouldChangeTo: pageCount,
+                keeping: this.storage.correctPageCount
+              }, null, 2));
+            } else {
+              // Check if height has actually changed to avoid unnecessary updates
+              const heightChanged = Math.abs(naturalHeight - this.storage.lastMeasuredHeight) > 5; // 5px tolerance
               
-              // Trigger decoration update
-              this.editor.view.dispatch(
-                this.editor.view.state.tr.setMeta(pagination_meta_key, true)
-              );
+              if (heightChanged) {
+                this.storage.lastMeasuredHeight = naturalHeight;
+                
+                // Check if we're within the locked height range
+                const withinLockedRange = naturalHeight >= this.storage.lockedHeightRange.min && 
+                                         naturalHeight <= this.storage.lockedHeightRange.max;
+                
+                // Update page count if changed
+                if (pageCount !== this.storage.correctPageCount) {
+                  // Only update if height is stable AND outside locked range
+                  if (withinLockedRange || !isHeightStable) {
+                    console.log('🔒 Height within locked range or unstable, keeping page count:', JSON.stringify({
+                      currentHeight: naturalHeight,
+                      lockedRange: this.storage.lockedHeightRange,
+                      wouldChangeTo: pageCount,
+                      keeping: this.storage.correctPageCount,
+                      isHeightStable
+                    }, null, 2));
+                  } else {
+                    console.log('🔄 Page count updated:', JSON.stringify({
+                      from: this.storage.correctPageCount,
+                      to: pageCount,
+                      heightDiff: Math.abs(naturalHeight - this.storage.lastMeasuredHeight),
+                      outsideLockedRange: true,
+                      isHeightStable
+                    }, null, 2));
+                    this.storage.correctPageCount = pageCount;
+                    
+                    // Update locked range for new page count
+                    const tolerance = contentPerPage * 0.5;
+                    this.storage.lockedHeightRange = {
+                      min: naturalHeight - tolerance,
+                      max: naturalHeight + tolerance
+                    };
+                    
+                    // Trigger decoration update
+                    this.editor.view.dispatch(
+                      this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+                    );
+                  }
+                }
+              }
             }
           }
 
-          // Set paginated height
-          const paginatedHeight = calculatePaginatedHeight(pageCount);
+          // Set paginated height - use the stored correct page count, not the calculated one
+          const finalPageCount = this.storage.correctPageCount || pageCount;
+          const paginatedHeight = calculatePaginatedHeight(finalPageCount);
+          
+          console.log('📏 Final height calculation:', JSON.stringify({
+            calculatedPageCount: pageCount,
+            storedPageCount: this.storage.correctPageCount,
+            finalPageCount,
+            paginatedHeight
+          }, null, 2));
           
           // Apply calculated height
           targetNode.style.height = `${paginatedHeight}px`;
           
           // Check for content overflow after setting height and trigger auto-fix
           requestAnimationFrame(() => {
+            // Check if cancelled
+            if (currentToken !== this.storage.measureToken && !isInitialMeasurement) return;
+            
             const actualScrollHeight = targetNode.scrollHeight;
             const containerHeight = paginatedHeight;
             const overflow = actualScrollHeight - containerHeight;
             
-            if (overflow > 0) {
-              console.error(`🚨 CONTENT OVERFLOW DETECTED:`, {
-                containerHeight: containerHeight,
-                actualScrollHeight: actualScrollHeight,
-                overflow: overflow,
-                overflowPages: Math.ceil(overflow / contentPerPage),
-                pageCount: pageCount,
-                suggestedPages: pageCount + Math.ceil(overflow / contentPerPage)
-              });
+            if (overflow > 0 && !this.storage.isInitialMeasurement) {
+              // Content overflow detected
               
               // Auto-fix: Add enough pages to contain all content
               const additionalPages = Math.ceil(overflow / contentPerPage);
-              const newPageCount = pageCount + additionalPages;
+              const newPageCount = finalPageCount + additionalPages;
               const newHeight = calculatePaginatedHeight(newPageCount);
-              console.log(`🔧 Auto-fixing: ${pageCount} → ${newPageCount} pages, ${containerHeight} → ${newHeight}px`);
+              // Auto-fixing page count
               
               // Apply corrected height and update storage
               targetNode.style.height = `${newHeight}px`;
@@ -454,12 +706,15 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               
               // Check once more after the fix to ensure it worked
               requestAnimationFrame(() => {
+                // Check if cancelled
+                if (currentToken !== this.storage.measureToken && !isInitialMeasurement) return;
+                
                 const finalScrollHeight = targetNode.scrollHeight;
                 const finalContainerHeight = parseInt(targetNode.style.height);
                 const finalOverflow = finalScrollHeight - finalContainerHeight;
                 
                 if (finalOverflow > 0) {
-                  console.warn(`⚠️ Still have overflow after fix: ${finalOverflow}px. May need another iteration.`);
+                  // Still have overflow after fix
                   
                   // If still overflowing, add one more page as safety margin
                   const safetyPageCount = newPageCount + 1;
@@ -467,70 +722,74 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   targetNode.style.height = `${safetyHeight}px`;
                   this.storage.correctPageCount = safetyPageCount;
                   
-                  console.log(`🛡️ Safety fix: ${newPageCount} → ${safetyPageCount} pages`);
+                  // Safety fix applied
                   
                   // Final decoration update
                   this.editor.view.dispatch(
                     this.editor.view.state.tr.setMeta(pagination_meta_key, true)
                   );
                 } else {
-                  console.log(`✅ Auto-fix successful: ${finalOverflow}px overflow remaining`);
+                  // Auto-fix successful
                 }
               });
             }
           });
           
-          // Update last-page class
-          const pagesContainer = targetNode.querySelector('#pages');
-          if (pagesContainer && pagesContainer.children.length > 0) {
-            pagesContainer.querySelectorAll('.last-page').forEach(el => {
-              el.classList.remove('last-page');
-            });
-            
-            const lastPageIndex = Math.min(pageCount - 1, pagesContainer.children.length - 1);
-            if (lastPageIndex >= 0) {
-              pagesContainer.children[lastPageIndex].classList.add('last-page');
-            }
+        // Last-page class is now handled in createDecoration for incremental updates
+        
+        // Final cancellation check before restoration
+        if (currentToken !== this.storage.measureToken && !isInitialMeasurement) return;
+        
+        // Restore cursor and scroll position
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        
+        // Restore scroll position
+        targetNode.scrollTop = savedScrollTop;
+        targetNode.scrollLeft = savedScrollLeft;
+        
+        // Restore cursor position
+        if (savedCursorPos >= 0) {
+          try {
+            const clampedPos = Math.min(savedCursorPos, this.editor.state.doc.content.size);
+            const selection = TextSelection.create(this.editor.state.doc, clampedPos);
+            const tr = this.editor.state.tr.setSelection(selection);
+            this.editor.view.dispatch(tr);
+          } catch (e) {
+            // If cursor position is invalid, don't restore
           }
-          
-          // Restore cursor and scroll position
-          requestAnimationFrame(() => {
-            // Restore scroll position
-            targetNode.scrollTop = savedScrollTop;
-            targetNode.scrollLeft = savedScrollLeft;
-            
-            // Restore cursor position
-            if (savedCursorPos >= 0) {
-              try {
-                const clampedPos = Math.min(savedCursorPos, this.editor.state.doc.content.size);
-                const selection = TextSelection.create(this.editor.state.doc, clampedPos);
-                const tr = this.editor.state.tr.setSelection(selection);
-                this.editor.view.dispatch(tr);
-              } catch (e) {
-                // If cursor position is invalid, don't restore
-              }
-            }
-            
-            // Reset flags
-            this.storage.positionSaved = false;
-            
-            if (callback) {
-              callback();
-            }
-          });
-          };
-          
-          // Call the async measurement function
-          measureWhenReady().catch((error) => {
-            console.warn('⚠️ Content readiness detection failed, proceeding with measurement:', error);
-            // Fallback: continue with the rest of the function anyway
-          });
-        });
-      });
+        }
+        
+        // Reset flags
+        this.storage.positionSaved = false;
+        
+        if (callback) {
+          callback();
+        }
+        
+        // Clear initial measurement flag after first successful measurement
+        if (isInitialMeasurement && this.storage.correctPageCount > 1) {
+          this.storage.isInitialMeasurement = false;
+          this.storage.initialSetupCompleteTime = Date.now();
+          console.log('✅ Initial setup complete:', JSON.stringify({
+            finalPageCount: this.storage.correctPageCount,
+            isInitialMeasurement: this.storage.isInitialMeasurement,
+            timestamp: this.storage.initialSetupCompleteTime
+          }, null, 2));
+        }
+      } catch (error) {
+        console.log('⚠️ Content readiness detection failed:', error);
+        // Fallback: continue with the rest of the function anyway
+      }
     };
 
-    // Debounced remeasure function for content changes
+    // Debounced remeasure function for content changes with cancellation
     const remeasureContent = (delay: number = 100) => {
+      console.log('📏 remeasureContent called:', JSON.stringify({
+        delay,
+        hasExistingTimer: !!this.storage.remeasureTimer,
+        isInitialMeasurement: this.storage.isInitialMeasurement
+      }, null, 2));
+      
       if (this.storage.remeasureTimer) {
         clearTimeout(this.storage.remeasureTimer);
       }
@@ -538,7 +797,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       this.storage.remeasureTimer = setTimeout(() => {
         // Reset position saved flag so fresh position is captured
         this.storage.positionSaved = false;
-        measureAndUpdatePages();
+        
+        // Cancel any pending measurement and start new one
+        this.storage.currentMeasurePromise = measureAndUpdatePages();
       }, delay);
     };
 
@@ -546,12 +807,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     this.storage.remeasureContent = remeasureContent;
 
     // Add event listener for forced refresh
-    targetNode.addEventListener('pagination-refresh', (e: Event) => {
+    const paginationRefreshHandler = (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail?.force) {
-        console.log('🔄 Forced pagination refresh');
+        // Forced pagination refresh
         remeasureContent(0);
       }
+    };
+    targetNode.addEventListener('pagination-refresh', paginationRefreshHandler);
+    
+    // Track cleanup
+    this.storage.cleanups.push(() => {
+      targetNode.removeEventListener('pagination-refresh', paginationRefreshHandler);
     });
 
     // Initial setup
@@ -559,12 +826,48 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       this.editor.view.state.tr.setMeta(pagination_meta_key, true)
     );
 
+    // Use ResizeObserver for efficient content change detection
+    let resizeObserverTimeout: NodeJS.Timeout | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      const timeSinceSetup = this.storage.initialSetupCompleteTime ? Date.now() - this.storage.initialSetupCompleteTime : 0;
+      const inGracePeriod = timeSinceSetup < 500; // 500ms grace period
+      
+      console.log('📐 ResizeObserver fired:', JSON.stringify({
+        isInitialized: this.storage.isInitialized,
+        isInitialMeasurement: this.storage.isInitialMeasurement,
+        timeSinceSetup,
+        inGracePeriod,
+        willTriggerRemeasure: this.storage.isInitialized && !this.storage.isInitialMeasurement && !inGracePeriod
+      }, null, 2));
+      
+      // Only respond to resize events after initial setup is complete
+      // and we're outside the grace period
+      if (this.storage.isInitialized && !this.storage.isInitialMeasurement && !inGracePeriod) {
+        // Debounce resize observer to prevent excessive measurements
+        if (resizeObserverTimeout) {
+          clearTimeout(resizeObserverTimeout);
+        }
+        resizeObserverTimeout = setTimeout(() => {
+          remeasureContent(100);
+        }, 50);
+      }
+    });
+    resizeObserver.observe(targetNode);
+    
+    // Track cleanup
+    this.storage.cleanups.push(() => {
+      if (resizeObserverTimeout) {
+        clearTimeout(resizeObserverTimeout);
+      }
+      resizeObserver.disconnect();
+    });
+
     // Initial measurement after fonts load
     requestAnimationFrame(() => {
       if ('fonts' in document && document.fonts.status !== 'loaded') {
-        document.fonts.ready.then(() => {
-          console.log('🔤 Fonts loaded, performing initial measurement');
-          measureAndUpdatePages(() => {
+        document.fonts.ready.then(async () => {
+          // Fonts loaded, performing initial measurement
+          await measureAndUpdatePages(() => {
             this.storage.isInitialized = true;
             if (this.options.onReady) {
               this.options.onReady();
@@ -573,7 +876,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         });
       } else {
         // Fonts already loaded
-        measureAndUpdatePages(() => {
+        measureAndUpdatePages().then(() => {
           this.storage.isInitialized = true;
           if (this.options.onReady) {
             this.options.onReady();
@@ -584,7 +887,19 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
   },
 
   onDestroy() {
-    // Cleanup
+    // Cleanup all tracked resources
+    if (this.storage?.cleanups) {
+      this.storage.cleanups.forEach((cleanup: () => void) => {
+        try {
+          cleanup();
+        } catch (e) {
+          // Cleanup error occurred
+        }
+      });
+      this.storage.cleanups = [];
+    }
+    
+    // Cleanup timer
     if (this.storage?.remeasureTimer) {
       clearTimeout(this.storage.remeasureTimer);
     }
@@ -593,6 +908,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     const style = document.querySelector('[data-rm-pagination-style]');
     if (style && style.parentNode) {
       style.parentNode.removeChild(style);
+    }
+    
+    // Remove class from editor
+    const targetNode = this.editor?.view?.dom as HTMLElement;
+    if (targetNode) {
+      targetNode.classList.remove('rm-with-pagination');
     }
   },
 
@@ -617,18 +938,15 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             const isLargePaste = sizeDiff > 1000;
             const isLargeDeletion = sizeDiff < -50 && newState.doc.content.size < 20;
             
-            if (tr.docChanged) {
-              console.log('🔄 Document change:', {
-                sizeDiff,
-                isLargePaste,
-                isLargeDeletion,
-                oldSize: lastDocSize,
-                newSize: newState.doc.content.size
-              });
+            // Check if this is an undo/redo operation
+            const isUndoRedo = tr.getMeta('history$') || tr.getMeta('appendedTransaction');
+            
+            if (tr.docChanged || isUndoRedo) {
+              // Document changed or undo/redo operation
               
               // Handle large paste with delayed remeasurement
               if (isLargePaste && extensionStorage.isInitialized) {
-                console.log('📋 Large paste detected - scheduling remeasurement');
+                // Large paste detected - scheduling remeasurement
                 
                 // Quick remeasure for immediate feedback
                 extensionStorage.remeasureContent(50);
@@ -641,15 +959,15 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               
               // Handle large deletion
               if (isLargeDeletion) {
-                console.log('🗑️ Large deletion detected');
+                // Large deletion detected
                 extensionStorage.correctPageCount = 1;
                 if (extensionStorage.isInitialized) {
                   extensionStorage.remeasureContent(50);
                 }
               }
               
-              // Handle normal content changes after initialization
-              if (sizeChanged && !isLargePaste && !isLargeDeletion && extensionStorage.isInitialized) {
+              // Handle normal content changes after initialization (including undo/redo)
+              if ((sizeChanged || isUndoRedo) && !isLargePaste && !isLargeDeletion && extensionStorage.isInitialized) {
                 extensionStorage.remeasureContent(300);
               }
             }
@@ -658,7 +976,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             if ((tr.docChanged && isLargeDeletion) || tr.getMeta(pagination_meta_key)) {
               lastDocSize = newState.doc.content.size;
               
-              console.log('🔄 Updating decorations');
+              console.log('🎨 Updating decorations:', JSON.stringify({
+                isLargeDeletion,
+                hasPaginationMeta: !!tr.getMeta(pagination_meta_key),
+                pageCount: extensionStorage.correctPageCount
+              }, null, 2));
               const widgetList = createDecoration(newState, pageOptions, extensionStorage);
               return DecorationSet.create(newState.doc, [...widgetList]);
             }
@@ -695,76 +1017,66 @@ function createDecoration(
       
       // Use stored page count
       const pages = extensionStorage?.correctPageCount || 1;
-      // Creating page elements
+      const finalPageCount = Math.min(pages, pageOptions.maxPages || 1000);
+      
+      console.log('🏗️ Creating decorations:', JSON.stringify({
+        storedPageCount: extensionStorage?.correctPageCount,
+        finalPageCount,
+        isReusing: !!view.dom.querySelector('#pages')
+      }, null, 2));
       
       const breakerWidth = view.dom.clientWidth;
       
+      // Check if we can reuse existing pagination element
+      const existingPagination = view.dom.querySelector('#pages') as HTMLElement;
+      if (existingPagination && existingPagination.dataset.rmPagination === "true") {
+        // INCREMENTAL UPDATE: Update existing pages instead of recreating
+        const currentPageCount = existingPagination.children.length;
+        
+        if (finalPageCount > currentPageCount) {
+          // Add missing pages
+          const fragment = document.createDocumentFragment();
+          for (let i = currentPageCount; i < finalPageCount; i++) {
+            fragment.appendChild(createPageBreak(i === 0, false, _pageHeight, _pageHeaderHeight, _pageGap, _pageBreakBackground, breakerWidth, pageOptions.headerText));
+          }
+          existingPagination.appendChild(fragment);
+        } else if (finalPageCount < currentPageCount) {
+          // Remove excess pages
+          while (existingPagination.children.length > finalPageCount) {
+            existingPagination.lastChild!.remove();
+          }
+        }
+        
+        // Update last-page class
+        existingPagination.querySelectorAll('.last-page').forEach(el => {
+          el.classList.remove('last-page');
+        });
+        if (finalPageCount > 0) {
+          existingPagination.children[finalPageCount - 1].classList.add('last-page');
+        }
+        
+        // Update breaker widths on all existing page breaks
+        const breakers = existingPagination.querySelectorAll('.breaker');
+        breakers.forEach((breaker: Element) => {
+          const breakerEl = breaker as HTMLElement;
+          breakerEl.style.width = `calc(${breakerWidth}px)`;
+          breakerEl.style.marginLeft = `calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%))`;
+          breakerEl.style.marginRight = `calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%))`;
+        });
+        
+        return existingPagination;
+      }
+      
+      // INITIAL CREATION: Create new pagination element
       const el = document.createElement("div");
       el.dataset.rmPagination = "true";
       el.id = "pages";
 
       // Create fragment for batch DOM operation
       const fragment = document.createDocumentFragment();
-
-      const createPageBreak = (isFirst: boolean, isLast: boolean) => {
-        const pageContainer = document.createElement("div");
-        pageContainer.className = "rm-page-break" + (isLast ? " last-page" : "");
-
-        const page = document.createElement("div");
-        page.className = "page";
-        page.style.cssText = `
-          position: relative;
-          float: left;
-          clear: both;
-          margin-top: ${isFirst ? `calc(${_pageHeaderHeight}px + ${_pageHeight}px)` : _pageHeight + "px"};
-        `;
-
-        const pageBreak = document.createElement("div");
-        pageBreak.className = "breaker";
-        pageBreak.style.cssText = `
-          width: calc(${breakerWidth}px);
-          margin-left: calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%));
-          margin-right: calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%));
-          position: relative;
-          float: left;
-          clear: both;
-          left: 0px;
-          right: 0px;
-          z-index: 2;
-        `;
-
-        const pageFooter = document.createElement("div");
-        pageFooter.className = "rm-page-footer";
-        pageFooter.style.height = _pageHeaderHeight + "px";
-
-        const pageSpace = document.createElement("div");
-        pageSpace.className = "rm-pagination-gap";
-        pageSpace.style.cssText = `
-          height: ${_pageGap}px;
-          border-left: 1px solid ${_pageBreakBackground};
-          border-right: 1px solid ${_pageBreakBackground};
-          position: relative;
-          width: calc(100% + 2px) !important;
-          left: -1px;
-          background-color: ${_pageBreakBackground};
-        `;
-
-        const pageHeader = document.createElement("div");
-        pageHeader.className = "rm-page-header";
-        pageHeader.style.height = _pageHeaderHeight + "px";
-        pageHeader.textContent = pageOptions.headerText;
-
-        pageBreak.append(pageFooter, pageSpace, pageHeader);
-        pageContainer.append(page, pageBreak);
-
-        return pageContainer;
-      };
-
-      // Build all pages at once  
-      const finalPageCount = Math.min(pages, pageOptions.maxPages || 1000);
       
       for (let i = 0; i < finalPageCount; i++) {
-        fragment.appendChild(createPageBreak(i === 0, i === finalPageCount - 1));
+        fragment.appendChild(createPageBreak(i === 0, i === finalPageCount - 1, _pageHeight, _pageHeaderHeight, _pageGap, _pageBreakBackground, breakerWidth, pageOptions.headerText));
       }
       
       el.appendChild(fragment);
@@ -772,6 +1084,70 @@ function createDecoration(
     },
     { side: -1 }
   );
+  
+  // Helper function moved outside for reusability
+  function createPageBreak(
+    isFirst: boolean, 
+    isLast: boolean, 
+    _pageHeight: number,
+    _pageHeaderHeight: number,
+    _pageGap: number,
+    _pageBreakBackground: string,
+    breakerWidth: number,
+    headerText: string
+  ) {
+    const pageContainer = document.createElement("div");
+    pageContainer.className = "rm-page-break" + (isLast ? " last-page" : "");
+
+    const page = document.createElement("div");
+    page.className = "page";
+    page.style.cssText = `
+      position: relative;
+      float: left;
+      clear: both;
+      margin-top: ${isFirst ? `calc(${_pageHeaderHeight}px + ${_pageHeight}px)` : _pageHeight + "px"};
+    `;
+
+    const pageBreak = document.createElement("div");
+    pageBreak.className = "breaker";
+    pageBreak.style.cssText = `
+      width: calc(${breakerWidth}px);
+      margin-left: calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%));
+      margin-right: calc(calc(calc(${breakerWidth}px - 100%) / 2) - calc(${breakerWidth}px - 100%));
+      position: relative;
+      float: left;
+      clear: both;
+      left: 0px;
+      right: 0px;
+      z-index: 2;
+    `;
+
+    const pageFooter = document.createElement("div");
+    pageFooter.className = "rm-page-footer";
+    pageFooter.style.height = _pageHeaderHeight + "px";
+
+    const pageSpace = document.createElement("div");
+    pageSpace.className = "rm-pagination-gap";
+    pageSpace.style.cssText = `
+      height: ${_pageGap}px;
+      border-left: 1px solid ${_pageBreakBackground};
+      border-right: 1px solid ${_pageBreakBackground};
+      position: relative;
+      width: calc(100% + 2px) !important;
+      left: -1px;
+      background-color: ${_pageBreakBackground};
+    `;
+
+    const pageHeader = document.createElement("div");
+    pageHeader.className = "rm-page-header";
+    pageHeader.style.height = _pageHeaderHeight + "px";
+    pageHeader.textContent = headerText;
+
+    pageBreak.append(pageFooter, pageSpace, pageHeader);
+    pageContainer.append(page, pageBreak);
+
+    return pageContainer;
+  }
 
   const firstHeaderWidget = Decoration.widget(
     0,

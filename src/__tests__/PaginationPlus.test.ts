@@ -231,7 +231,7 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('const measureWhenReady = async () => {');
+      expect(PaginationPlusSource).toContain('const measureAndUpdatePages = async (callback?: () => void) => {');
       expect(PaginationPlusSource).toContain('await Promise.all([');
       expect(PaginationPlusSource).toContain('document.fonts.ready');
     });
@@ -258,7 +258,7 @@ describe('PaginationPlus Height Calculations', () => {
       
       expect(PaginationPlusSource).toContain('const remeasureContent = (delay: number = 100) => {');
       expect(PaginationPlusSource).toContain('setTimeout(() => {');
-      expect(PaginationPlusSource).toContain('measureAndUpdatePages();');
+      expect(PaginationPlusSource).toContain('this.storage.currentMeasurePromise = measureAndUpdatePages()');
     });
 
     it('should clear previous timer when remeasuring', () => {
@@ -300,21 +300,21 @@ describe('PaginationPlus Height Calculations', () => {
       );
       
       const lines = PaginationPlusSource.split('\n');
-      let lastPageClassLine = -1;
+      let heightCalculationLine = -1;
       let restoreAfterSettledLine = -1;
       
       lines.forEach((line: string, index: number) => {
-        if (line.includes('classList.add(\'last-page\')')) {
-          lastPageClassLine = index;
+        if (line.includes('targetNode.style.height = `${paginatedHeight}px`')) {
+          heightCalculationLine = index;
         }
         if (line.includes('targetNode.scrollTop = savedScrollTop')) {
           restoreAfterSettledLine = index;
         }
       });
       
-      expect(lastPageClassLine).toBeGreaterThan(-1);
+      expect(heightCalculationLine).toBeGreaterThan(-1);
       expect(restoreAfterSettledLine).toBeGreaterThan(-1);
-      expect(restoreAfterSettledLine).toBeGreaterThan(lastPageClassLine);
+      expect(restoreAfterSettledLine).toBeGreaterThan(heightCalculationLine);
     });
 
     it('should handle position restoration in async context', () => {
@@ -324,9 +324,9 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('const measureWhenReady = async () => {');
+      expect(PaginationPlusSource).toContain('const measureAndUpdatePages = async (callback?: () => void) => {');
       expect(PaginationPlusSource).toContain('targetNode.scrollTop = savedScrollTop');
-      expect(PaginationPlusSource).toContain('requestAnimationFrame(() => {');
+      expect(PaginationPlusSource).toContain('await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))');
     });
 
     it('should implement scroll locking after debounce, not during typing', () => {
