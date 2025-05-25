@@ -46,6 +46,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       savedScrollTop: 0,
       savedScrollLeft: 0,
       positionSaved: false,
+      // Track last measured height to avoid unnecessary updates
+      lastMeasuredHeight: 0,
     };
   },
   
@@ -291,12 +293,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       const savedScrollTop = this.storage.savedScrollTop;
       const savedScrollLeft = this.storage.savedScrollLeft;
       
-      // Temporarily set to auto height for natural measurement
-      targetNode.style.height = 'auto';
-      targetNode.style.minHeight = '0';
-      
-      // Force layout reflow
-      targetNode.offsetHeight;
+      // NEW APPROACH: Measure content height without changing container dimensions
+      // This prevents both jank AND excessive page creation
       
       // Wait for layout to complete
       requestAnimationFrame(() => {
@@ -337,8 +335,30 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             // Force layout reflow after hiding decorations
             targetNode.offsetHeight;
             
-            // Now measure - content should be fully settled WITHOUT decorations
-            const naturalHeight = targetNode.scrollHeight;
+            // Measure actual content height by summing up child heights
+            // This is more accurate than scrollHeight when container has fixed height
+            let contentHeight = 0;
+            const children = targetNode.children;
+            
+            for (let i = 0; i < children.length; i++) {
+              const child = children[i] as HTMLElement;
+              // Skip pagination elements and headers/footers
+              if (!child.dataset.rmPagination && 
+                  !child.classList.contains('rm-page-header') && 
+                  !child.classList.contains('rm-page-footer')) {
+                const rect = child.getBoundingClientRect();
+                const styles = window.getComputedStyle(child);
+                const marginTop = parseFloat(styles.marginTop);
+                const marginBottom = parseFloat(styles.marginBottom);
+                contentHeight += rect.height + marginTop + marginBottom;
+              }
+            }
+            
+            // Add container padding
+            const containerStyles = window.getComputedStyle(targetNode);
+            const paddingTop = parseFloat(containerStyles.paddingTop);
+            const paddingBottom = parseFloat(containerStyles.paddingBottom);
+            const naturalHeight = contentHeight + paddingTop + paddingBottom;
             
             // Restore pagination decorations
             paginationElements.forEach((el, index) => {
@@ -378,23 +398,27 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           // Use initial calculation for now
           let pageCount = initialPageCount;
           
-          // Clean logging removed for performance
+          // Check if height has actually changed to avoid unnecessary updates
+          const heightChanged = Math.abs(naturalHeight - this.storage.lastMeasuredHeight) > 5; // 5px tolerance
           
-          // Update page count if changed
-          if (pageCount !== this.storage.correctPageCount) {
-            this.storage.correctPageCount = pageCount;
+          if (heightChanged) {
+            this.storage.lastMeasuredHeight = naturalHeight;
             
-            // Trigger decoration update
-            this.editor.view.dispatch(
-              this.editor.view.state.tr.setMeta(pagination_meta_key, true)
-            );
+            // Update page count if changed
+            if (pageCount !== this.storage.correctPageCount) {
+              this.storage.correctPageCount = pageCount;
+              
+              // Trigger decoration update
+              this.editor.view.dispatch(
+                this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+              );
+            }
           }
 
           // Set paginated height
           const paginatedHeight = calculatePaginatedHeight(pageCount);
           
           // Apply calculated height
-          
           targetNode.style.height = `${paginatedHeight}px`;
           
           // Check for content overflow after setting height and trigger auto-fix
@@ -408,13 +432,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 containerHeight: containerHeight,
                 actualScrollHeight: actualScrollHeight,
                 overflow: overflow,
-                overflowPages: Math.ceil(overflow / 742), // content per page
+                overflowPages: Math.ceil(overflow / contentPerPage),
                 pageCount: pageCount,
-                suggestedPages: pageCount + Math.ceil(overflow / 742)
+                suggestedPages: pageCount + Math.ceil(overflow / contentPerPage)
               });
               
               // Auto-fix: Add enough pages to contain all content
-              const additionalPages = Math.ceil(overflow / 742);
+              const additionalPages = Math.ceil(overflow / contentPerPage);
               const newPageCount = pageCount + additionalPages;
               const newHeight = calculatePaginatedHeight(newPageCount);
               console.log(`🔧 Auto-fixing: ${pageCount} → ${newPageCount} pages, ${containerHeight} → ${newHeight}px`);
@@ -507,22 +531,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Debounced remeasure function for content changes
     const remeasureContent = (delay: number = 100) => {
-      // CAPTURE POSITION IMMEDIATELY when user types (not later in timer)
-      const currentCursor = this.editor.state.selection.from;
-      const currentScroll = targetNode.scrollTop;
-      const currentScrollLeft = targetNode.scrollLeft;
-      
-      // Always update to the latest position during typing
-      this.storage.savedCursorPos = currentCursor;
-      this.storage.savedScrollTop = currentScroll;
-      this.storage.savedScrollLeft = currentScrollLeft;
-      this.storage.positionSaved = true;
-      
       if (this.storage.remeasureTimer) {
         clearTimeout(this.storage.remeasureTimer);
       }
       
       this.storage.remeasureTimer = setTimeout(() => {
+        // Reset position saved flag so fresh position is captured
+        this.storage.positionSaved = false;
         measureAndUpdatePages();
       }, delay);
     };

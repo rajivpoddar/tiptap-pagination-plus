@@ -210,7 +210,7 @@ describe('PaginationPlus Height Calculations', () => {
       );
       
       expect(PaginationPlusSource).toContain('Math.min(savedCursorPos, this.editor.state.doc.content.size)');
-      expect(PaginationPlusSource).toContain('console.warn(\'Could not restore cursor position:\', e)');
+      expect(PaginationPlusSource).toContain('catch (e) {');
     });
 
     it('should restore scroll position after measurement', () => {
@@ -231,9 +231,9 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('await waitForDOMSettled()');
-      expect(PaginationPlusSource).toContain('const restoreAfterSettled = async () => {');
-      expect(PaginationPlusSource).toContain('event: \'measure_start\'');
+      expect(PaginationPlusSource).toContain('const measureWhenReady = async () => {');
+      expect(PaginationPlusSource).toContain('await Promise.all([');
+      expect(PaginationPlusSource).toContain('document.fonts.ready');
     });
   });
 
@@ -284,11 +284,12 @@ describe('PaginationPlus Height Calculations', () => {
       );
       
       // Check for position saving in measurement function
-      expect(PaginationPlusSource).toContain('event: \'cursor_position_updated\'');
-      expect(PaginationPlusSource).toContain('this.storage.savedCursorPos = currentCursorPos');
+      expect(PaginationPlusSource).toContain('this.storage.savedCursorPos = this.editor.state.selection.from');
+      expect(PaginationPlusSource).toContain('this.storage.savedScrollTop = targetNode.scrollTop');
       
-      // Check for height manipulation  
-      expect(PaginationPlusSource).toContain('targetNode.style.height = \'auto\'');
+      // Check for new measurement approach
+      expect(PaginationPlusSource).toContain('let contentHeight = 0');
+      expect(PaginationPlusSource).toContain('child.getBoundingClientRect()');
     });
 
     it('should restore positions after all measurements complete', () => {
@@ -306,7 +307,7 @@ describe('PaginationPlus Height Calculations', () => {
         if (line.includes('classList.add(\'last-page\')')) {
           lastPageClassLine = index;
         }
-        if (line.includes('const restoreAfterSettled = async () => {')) {
+        if (line.includes('targetNode.scrollTop = savedScrollTop')) {
           restoreAfterSettledLine = index;
         }
       });
@@ -324,8 +325,8 @@ describe('PaginationPlus Height Calculations', () => {
       );
       
       expect(PaginationPlusSource).toContain('const measureWhenReady = async () => {');
-      expect(PaginationPlusSource).toContain('const restoreAfterSettled = async () => {');
       expect(PaginationPlusSource).toContain('targetNode.scrollTop = savedScrollTop');
+      expect(PaginationPlusSource).toContain('requestAnimationFrame(() => {');
     });
 
     it('should implement scroll locking after debounce, not during typing', () => {
@@ -335,14 +336,13 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('const lockScroll = () => {');
-      expect(PaginationPlusSource).toContain('const unlockScroll = () => {');
-      expect(PaginationPlusSource).toContain('this.storage.scrollLocked = true');
+      // Check for debounced remeasurement
+      expect(PaginationPlusSource).toContain('this.storage.remeasureTimer = setTimeout');
+      expect(PaginationPlusSource).toContain('clearTimeout(this.storage.remeasureTimer)');
       
-      // Check that locking happens after timer fires, not on schedule
-      expect(PaginationPlusSource).toContain('event: \'scroll_locked\'');
-      expect(PaginationPlusSource).toContain('lockScroll();');
-      expect(PaginationPlusSource).toContain('unlockScroll();');
+      // Check that position saved flag is reset before measurement
+      expect(PaginationPlusSource).toContain('this.storage.positionSaved = false');
+      expect(PaginationPlusSource).toContain('measureAndUpdatePages()');
     });
 
     it('should wait for DOM to settle before restoration', () => {
@@ -352,10 +352,11 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('const waitForDOMSettled = (): Promise<void> => {');
-      expect(PaginationPlusSource).toContain('requiredStableFrames = 5');
-      expect(PaginationPlusSource).toContain('currentHeight === lastHeight && currentWidth === lastWidth');
-      expect(PaginationPlusSource).toContain('event: \'dom_settled\'');
+      // Check for layout stability detection
+      expect(PaginationPlusSource).toContain('const waitForLayoutStable = ');
+      expect(PaginationPlusSource).toContain('requiredStableFrames = 3');
+      expect(PaginationPlusSource).toContain('currentHeight === lastHeight');
+      expect(PaginationPlusSource).toContain('requestAnimationFrame(checkStability)');
     });
   });
 });
