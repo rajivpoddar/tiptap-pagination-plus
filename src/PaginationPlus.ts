@@ -214,11 +214,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     // Calculate paginated height based on page count
     const calculatePaginatedHeight = (pageCount: number): number => {
       const contentEditablePadding = 48;
+      const footerWrapperExtraHeight = 20; // 10px top + 10px bottom padding
 
       if (pageCount === 1) {
-        // For single page, just add padding to page height
+        // For single page, just add padding to page height + footer wrapper extra height
         const singlePageHeight =
-          contentEditablePadding + this.options.pageHeight;
+          contentEditablePadding + this.options.pageHeight + footerWrapperExtraHeight;
         return singlePageHeight;
       }
 
@@ -230,11 +231,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // - Page heights: 842px × number of pages (includes headers/footers)
       // - Gaps: 20px × number of gaps
       // - Header margins: 48px × number of gaps
-      // Note: Gap borders are handled by CSS and don't add to container height
+      // - Footer wrapper extra height: 20px × number of pages
       let total = contentEditablePadding; // 48
       total += this.options.pageHeight * pageCount; // 842 * pages
       total += this.options.pageGap * visibleGaps; // 20 * gaps
       total += headerMarginContribution * visibleGaps; // 48 * gaps (header margins)
+      total += footerWrapperExtraHeight * pageCount; // 20 * pages (footer wrapper padding)
 
       return total;
     };
@@ -1201,9 +1203,18 @@ function createDecoration(
       z-index: 2;
     `;
 
+    const pageFooterWrapper = document.createElement("div");
+    pageFooterWrapper.style.cssText = `
+      padding: 10px 0;
+      height: ${_pageHeaderHeight + 20}px;
+      box-sizing: border-box;
+    `;
+    
     const pageFooter = document.createElement("div");
     pageFooter.className = "rm-page-footer";
     pageFooter.style.height = _pageHeaderHeight + "px";
+    
+    pageFooterWrapper.appendChild(pageFooter);
 
     const pageSpace = document.createElement("div");
     pageSpace.className = "rm-pagination-gap";
@@ -1222,7 +1233,7 @@ function createDecoration(
     pageHeader.style.height = _pageHeaderHeight + "px";
     pageHeader.textContent = headerText;
 
-    pageBreak.append(pageFooter, pageSpace, pageHeader);
+    pageBreak.append(pageFooterWrapper, pageSpace, pageHeader);
     pageContainer.append(page, pageBreak);
 
     return pageContainer;
