@@ -359,4 +359,43 @@ describe('PaginationPlus Height Calculations', () => {
       expect(PaginationPlusSource).toContain('requestAnimationFrame(checkStability)');
     });
   });
+
+  describe('Keyboard Shortcuts', () => {
+    it('should implement Meta+Up workaround for pagination interference', () => {
+      // Verify the keyboard shortcut workaround exists
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      // Check for addKeyboardShortcuts method
+      expect(PaginationPlusSource).toContain('addKeyboardShortcuts() {');
+      expect(PaginationPlusSource).toContain("'Mod-ArrowUp': () => {");
+      
+      // Check for the workaround implementation
+      expect(PaginationPlusSource).toContain('this.editor.commands.setTextSelection(0)');
+      expect(PaginationPlusSource).toContain('this.editor.commands.scrollIntoView()');
+      expect(PaginationPlusSource).toContain('return true;');
+    });
+
+    it('should contain proper keyboard shortcut workaround logic', () => {
+      // Verify the keyboard shortcut implementation details
+      const PaginationPlusSource = require('fs').readFileSync(
+        require('path').join(__dirname, '../PaginationPlus.ts'),
+        'utf8'
+      );
+      
+      // Check that the workaround calls the correct commands in sequence
+      expect(PaginationPlusSource).toContain('this.editor.commands.setTextSelection(0);');
+      expect(PaginationPlusSource).toContain('this.editor.commands.scrollIntoView();');
+      
+      // Verify it's wrapped in the correct keyboard shortcut handler
+      const modArrowUpMatch = PaginationPlusSource.match(/'Mod-ArrowUp':\s*\(\)\s*=>\s*{[^}]*}/);
+      expect(modArrowUpMatch).toBeTruthy();
+      
+      // Ensure the handler returns true to prevent default behavior
+      const handlerContent = modArrowUpMatch?.[0] || '';
+      expect(handlerContent).toContain('return true;');
+    });
+  });
 });

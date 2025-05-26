@@ -38,6 +38,17 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     };
   },
 
+  addKeyboardShortcuts() {
+    return {
+      'Mod-ArrowUp': () => {
+        // Workaround for Meta+Up not working due to pagination decorations
+        this.editor.commands.setTextSelection(0);
+        this.editor.commands.scrollIntoView();
+        return true;
+      },
+    };
+  },
+
   addStorage() {
     return {
       correctPageCount: 1,
@@ -1125,7 +1136,7 @@ function createDecoration(
       el.appendChild(fragment);
       return el;
     },
-    { side: -1 }
+    { side: 1 }
   );
 
   // Helper function moved outside for reusability
@@ -1208,7 +1219,7 @@ function createDecoration(
       el.textContent = pageOptions.headerText;
       return el;
     },
-    { side: -1 }
+    { side: 1 }
   );
 
   const lastFooterWidget = Decoration.widget(
