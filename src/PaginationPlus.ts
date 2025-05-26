@@ -102,7 +102,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     style.textContent = `
       .rm-with-pagination {
         counter-reset: page-number;
-        overflow: hidden;
       }
       .rm-with-pagination .rm-page-footer::before {
         counter-increment: page-number;
@@ -128,6 +127,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         font-size: 0.8em;
         color: #7c7c7c;
         margin-top: 48px;
+        position: relative;
+        top: -15px;
+        user-select: none;
       }
       .rm-with-pagination > *:not(#pages):not(.rm-page-header):not(.rm-page-footer):not([data-rm-pagination]) {
         position: relative;
