@@ -71,6 +71,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       lockedHeightRange: { min: 0, max: 0 },
       // Allow page count updates even when height is unstable (for deletions)
       allowUnstableUpdate: false,
+      // Flag to scroll to cursor after pagination (for large paste)
+      scrollToCursorAfterUpdate: false,
     };
   },
 
@@ -730,11 +732,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           requestAnimationFrame(() => resolve())
         );
 
-        // Restore scroll position
-        targetNode.scrollTop = savedScrollTop;
-        targetNode.scrollLeft = savedScrollLeft;
-
-        // Restore cursor position
+        // Restore cursor position first
         if (savedCursorPos >= 0) {
           try {
             const clampedPos = Math.min(
@@ -750,6 +748,38 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           } catch (e) {
             // Ignore cursor restoration errors
           }
+        }
+
+        // Handle scroll restoration or scroll to cursor
+        if (this.storage.scrollToCursorAfterUpdate) {
+          // For large paste, scroll cursor into view instead of restoring old position
+          requestAnimationFrame(() => {
+            try {
+              // Get the current cursor position element
+              const selection = this.editor.state.selection;
+              const domPos = this.editor.view.domAtPos(selection.from);
+              const cursorElement = domPos.node.nodeType === Node.TEXT_NODE 
+                ? domPos.node.parentElement 
+                : domPos.node as Element;
+              
+              if (cursorElement && cursorElement.scrollIntoView) {
+                cursorElement.scrollIntoView({ 
+                  behavior: 'auto', 
+                  block: 'center' 
+                });
+              }
+            } catch (e) {
+              // Fallback to restoring saved scroll position
+              targetNode.scrollTop = savedScrollTop;
+              targetNode.scrollLeft = savedScrollLeft;
+            }
+          });
+          // Clear the flag
+          this.storage.scrollToCursorAfterUpdate = false;
+        } else {
+          // Normal scroll restoration
+          targetNode.scrollTop = savedScrollTop;
+          targetNode.scrollLeft = savedScrollLeft;
         }
 
         // Reset flags
@@ -950,6 +980,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 
                 // Handle large paste with faster remeasurement
                 if (isLargePaste) {
+                  // Set flag to scroll to cursor after pagination
+                  extensionStorage.scrollToCursorAfterUpdate = true;
                   extensionStorage.remeasureContent(50);
                   // Additional remeasure for very large pastes
                   if (sizeDiff > 10000) {
