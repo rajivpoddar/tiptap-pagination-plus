@@ -102,6 +102,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     style.textContent = `
       .rm-with-pagination {
         counter-reset: page-number;
+        overflow: hidden;
       }
       .rm-with-pagination .rm-page-footer::before {
         counter-increment: page-number;
