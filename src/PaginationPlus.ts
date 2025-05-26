@@ -102,6 +102,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     style.textContent = `
       .rm-with-pagination {
         counter-reset: page-number;
+        overflow: hidden;
       }
       .rm-with-pagination .rm-page-footer::before {
         counter-increment: page-number;
@@ -752,8 +753,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           requestAnimationFrame(() => resolve())
         );
 
-        // Restore cursor position first
-        if (savedCursorPos >= 0) {
+        // Restore cursor position first (but not for large paste operations)
+        if (savedCursorPos >= 0 && !this.storage.scrollToCursorAfterUpdate) {
           try {
             const clampedPos = Math.min(
               savedCursorPos,
