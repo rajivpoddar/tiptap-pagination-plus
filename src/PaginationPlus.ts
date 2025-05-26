@@ -179,6 +179,23 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         overflow-y: auto;
         width: 100%;
       }
+      
+      /* Firefox-specific fix: Use block display for empty paragraphs to maintain Enter functionality */
+      @-moz-document url-prefix() {
+        .rm-with-pagination p:empty,
+        .rm-with-pagination p > br.ProseMirror-trailingBreak:only-child {
+          display: block !important;
+          min-height: 24px !important;
+          line-height: 24px !important;
+          width: 100% !important;
+        }
+        .rm-with-pagination p:has(br.ProseMirror-trailingBreak:only-child) {
+          display: block !important;
+          min-height: 24px !important;
+          line-height: 24px !important;
+          width: 100% !important;
+        }
+      }
     `;
     document.head.appendChild(style);
 
