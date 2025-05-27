@@ -93,12 +93,17 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       remeasureContent: (() => {}) as (delay?: number) => void,
       // Store plugin instance ID for cleanup
       pluginInstanceId: null as string | null,
+      // Store editor reference for plugin access
+      editor: null as any,
     };
   },
 
   onCreate() {
     const targetNode = this.editor.view.dom as HTMLElement;
     targetNode.classList.add("rm-with-pagination");
+
+    // Store editor reference for plugin access
+    this.storage.editor = this.editor;
 
     // Options are available as this.options
 
@@ -695,8 +700,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 // Update if height is stable AND outside locked range, OR if unstable update is allowed
                 const shouldUpdate = (!withinLockedRange && isHeightStable) || this.storage.allowUnstableUpdate;
                 
+                
                 if (shouldUpdate) {
+                  const oldPageCount = this.storage.correctPageCount;
                   this.storage.correctPageCount = pageCount;
+
 
                   // Clear the unstable update flag after use
                   this.storage.allowUnstableUpdate = false;
@@ -712,6 +720,23 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   this.editor.view.dispatch(
                     this.editor.view.state.tr.setMeta(pagination_meta_key, true)
                   );
+                  
+                  // If page count increased, ensure cursor is visible
+                  if (pageCount > oldPageCount) {
+                    // Mark that we need to scroll to cursor after decorations are applied
+                    this.storage.scrollToCursorAfterUpdate = true;
+                    
+                    // Also use TipTap's scrollIntoView after decorations are updated
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        try {
+                          this.editor.commands.scrollIntoView();
+                        } catch (e) {
+                          // Ignore scroll errors
+                        }
+                      });
+                    });
+                  }
                 }
               } else {
                 // Clear allowUnstableUpdate flag even if page count didn't change
@@ -828,22 +853,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
         // Handle scroll restoration or scroll to cursor
         if (this.storage.scrollToCursorAfterUpdate) {
-          // For large paste, scroll cursor into view instead of restoring old position
+          // For large paste or new page creation, use TipTap's scrollIntoView
           requestAnimationFrame(() => {
             try {
-              // Get the current cursor position element
-              const selection = this.editor.state.selection;
-              const domPos = this.editor.view.domAtPos(selection.from);
-              const cursorElement = domPos.node.nodeType === Node.TEXT_NODE 
-                ? domPos.node.parentElement 
-                : domPos.node as Element;
-              
-              if (cursorElement && cursorElement.scrollIntoView) {
-                cursorElement.scrollIntoView({ 
-                  behavior: 'auto', 
-                  block: 'center' 
-                });
-              }
+              this.editor.commands.scrollIntoView();
             } catch (e) {
               // Fallback to restoring saved scroll position
               targetNode.scrollTop = savedScrollTop;
@@ -853,22 +866,37 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           // Clear the flag
           this.storage.scrollToCursorAfterUpdate = false;
         } else {
-          // Only restore scroll position if it hasn't changed significantly since we saved it
-          // This prevents jarring scroll jumps during active typing/scrolling
-          const currentScrollTop = targetNode.scrollTop;
-          const scrollDifference = Math.abs(currentScrollTop - savedScrollTop);
-          const isScrollStable = scrollDifference < 50; // Allow 50px tolerance
+          // Check if we were typing recently
+          const timeSinceTyping = Date.now() - this.storage.lastTypingTime;
+          const wasRecentlyTyping = timeSinceTyping < 2000; // 2 seconds
           
-          // Also check if we're at the bottom of the document (common case for last page typing)
-          const maxScroll = targetNode.scrollHeight - targetNode.clientHeight;
-          const isAtBottom = currentScrollTop >= maxScroll - 10; // 10px tolerance for "at bottom"
-          
-          // Only restore scroll if the position is stable and we're not at the bottom
-          if (isScrollStable && !isAtBottom) {
-            targetNode.scrollTop = savedScrollTop;
-            targetNode.scrollLeft = savedScrollLeft;
+          if (wasRecentlyTyping) {
+            // If we were typing recently, ensure cursor stays visible
+            requestAnimationFrame(() => {
+              try {
+                this.editor.commands.scrollIntoView();
+              } catch (e) {
+                // Ignore scroll errors
+              }
+            });
+          } else {
+            // Only restore scroll position if it hasn't changed significantly since we saved it
+            // This prevents jarring scroll jumps during active typing/scrolling
+            const currentScrollTop = targetNode.scrollTop;
+            const scrollDifference = Math.abs(currentScrollTop - savedScrollTop);
+            const isScrollStable = scrollDifference < 50; // Allow 50px tolerance
+            
+            // Also check if we're at the bottom of the document (common case for last page typing)
+            const maxScroll = targetNode.scrollHeight - targetNode.clientHeight;
+            const isAtBottom = currentScrollTop >= maxScroll - 10; // 10px tolerance for "at bottom"
+            
+            // Only restore scroll if the position is stable and we're not at the bottom
+            if (isScrollStable && !isAtBottom) {
+              targetNode.scrollTop = savedScrollTop;
+              targetNode.scrollLeft = savedScrollLeft;
+            }
+            // If scroll has changed significantly or we're at bottom, leave it alone
           }
-          // If scroll has changed significantly or we're at bottom, leave it alone
         }
 
         // Reset flags
@@ -1076,6 +1104,22 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               const isTyping = Math.abs(sizeDiff) <= 2 && !isUndoRedo;
               if (isTyping) {
                 extensionStorage.lastTypingTime = Date.now();
+                
+                // Simple fix: Use TipTap's scrollIntoView command
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    try {
+                      const editor = extensionStorage.editor;
+                      if (!editor) {
+                        return;
+                      }
+                      
+                      editor.commands.scrollIntoView();
+                    } catch (e) {
+                      // Ignore scroll errors
+                    }
+                  });
+                });
               }
               
               // Document changed or undo/redo operation
