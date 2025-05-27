@@ -87,6 +87,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // Track typing activity to avoid interfering with cursor during active typing
       lastTypingTime: 0,
       typingThreshold: 1000, // 1 second of inactivity before allowing cursor restoration
+      // Extension lifecycle tracking
+      destroyed: false,
+      // Type the remeasureContent function for proper type safety
+      remeasureContent: null as ((delay?: number) => void) | null,
     };
   },
 
@@ -380,11 +384,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         this.storage.savedScrollLeft = targetNode.scrollLeft;
         this.storage.positionSaved = true;
       }
-
-      // Use saved positions for restoration
-      const savedCursorPos = this.storage.savedCursorPos;
-      const savedScrollTop = this.storage.savedScrollTop;
-      const savedScrollLeft = this.storage.savedScrollLeft;
 
       // Measure content height without changing container dimensions
 
@@ -760,6 +759,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         if (currentToken !== this.storage.measureToken && !isInitialMeasurement)
           return;
 
+        // Capture fresh positions right before restoration (in case user moved during measurement)
+        const savedCursorPos = this.storage.savedCursorPos;
+        const savedScrollTop = this.storage.savedScrollTop;
+        const savedScrollLeft = this.storage.savedScrollLeft;
+
         // Restore cursor and scroll position
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
@@ -808,9 +812,22 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           // Clear the flag
           this.storage.scrollToCursorAfterUpdate = false;
         } else {
-          // Normal scroll restoration
-          targetNode.scrollTop = savedScrollTop;
-          targetNode.scrollLeft = savedScrollLeft;
+          // Only restore scroll position if it hasn't changed significantly since we saved it
+          // This prevents jarring scroll jumps during active typing/scrolling
+          const currentScrollTop = targetNode.scrollTop;
+          const scrollDifference = Math.abs(currentScrollTop - savedScrollTop);
+          const isScrollStable = scrollDifference < 50; // Allow 50px tolerance
+          
+          // Also check if we're at the bottom of the document (common case for last page typing)
+          const maxScroll = targetNode.scrollHeight - targetNode.clientHeight;
+          const isAtBottom = currentScrollTop >= maxScroll - 10; // 10px tolerance for "at bottom"
+          
+          // Only restore scroll if the position is stable and we're not at the bottom
+          if (isScrollStable && !isAtBottom) {
+            targetNode.scrollTop = savedScrollTop;
+            targetNode.scrollLeft = savedScrollLeft;
+          }
+          // If scroll has changed significantly or we're at bottom, leave it alone
         }
 
         // Reset flags
@@ -833,6 +850,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Debounced remeasure function for content changes with cancellation
     const remeasureContent = (delay: number = 100) => {
+      // Only prevent new operations if destroyed
+      if (this.storage.destroyed) {
+        return;
+      }
+
       if (this.storage.remeasureTimer) {
         clearTimeout(this.storage.remeasureTimer);
       }
@@ -912,6 +934,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         document.fonts.ready.then(async () => {
           // Fonts loaded, performing initial measurement
           await measureAndUpdatePages(() => {
+            // Only check destroyed for non-initial callback
+            if (this.storage.destroyed && !this.storage.isInitialMeasurement) {
+              return;
+            }
             this.storage.isInitialized = true;
             if (this.options.onReady) {
               this.options.onReady();
@@ -921,6 +947,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       } else {
         // Fonts already loaded
         measureAndUpdatePages().then(() => {
+          // Only check destroyed for non-initial callback
+          if (this.storage.destroyed && !this.storage.isInitialMeasurement) {
+            return;
+          }
           this.storage.isInitialized = true;
           if (this.options.onReady) {
             this.options.onReady();
@@ -931,6 +961,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
   },
 
   onDestroy() {
+    // Set destroyed flag first to prevent any new async operations
+    if (this.storage) {
+      this.storage.destroyed = true;
+    }
+
     // Cleanup all tracked resources
     if (this.storage?.cleanups) {
       this.storage.cleanups.forEach((cleanup: () => void) => {
@@ -946,6 +981,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     // Cleanup timer
     if (this.storage?.remeasureTimer) {
       clearTimeout(this.storage.remeasureTimer);
+      this.storage.remeasureTimer = null;
     }
 
     // Cleanup styles
