@@ -1035,7 +1035,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     return [
       new Plugin({
-        key: new PluginKey(`pagination-${pluginInstanceId}`),
+        key: new PluginKey<DecorationSet>(`pagination-${pluginInstanceId}`),
 
         state: {
           init(_, state) {

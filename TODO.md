@@ -54,7 +54,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Use `requestIdleCallback`** - Replace chained `setTimeout` for image/font waits with `requestIdleCallback` (16ms timeout)
 
 ### Minor Optimizations
-- [ ] **Return typed plugin key**
+- [x] **Return typed plugin key**
   ```ts
   const PAGINATION_PLUGIN = new PluginKey<DecorationSet>('pagination');
   ```
@@ -112,6 +112,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Storage type safety** - Fixed remeasureContent type declaration to be non-nullable for proper TypeScript safety
 - [x] **Large delete ghost gaps fix** - Ensure allowUnstableUpdate flag is reset even when page count doesn't change
 - [x] **requestIdleCallback optimization** - Use requestIdleCallback instead of setTimeout for better async timing
+- [x] **Typed plugin key** - Added explicit DecorationSet generic type to PluginKey for better TypeScript safety
 
 ## Notes
 
