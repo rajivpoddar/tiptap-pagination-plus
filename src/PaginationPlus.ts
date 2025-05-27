@@ -423,7 +423,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           waitForLayoutStable(targetNode),
 
           // 5. Wait for any pending async operations
-          new Promise((resolve) => setTimeout(resolve, 16)), // One frame
+          new Promise((resolve) => {
+            if ('requestIdleCallback' in window) {
+              requestIdleCallback(resolve, { timeout: 16 });
+            } else {
+              setTimeout(resolve, 16); // Fallback for older browsers
+            }
+          }),
         ]);
 
         // Check cancellation after async operations

@@ -51,13 +51,9 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
     this._resizeFrame = requestAnimationFrame(() => remeasureContent(50));
   });
   ```
-- [ ] **Use `requestIdleCallback`** - Replace chained `setTimeout` for image/font waits with `requestIdleCallback` (16ms timeout)
+- [x] **Use `requestIdleCallback`** - Replace chained `setTimeout` for image/font waits with `requestIdleCallback` (16ms timeout)
 
 ### Minor Optimizations
-- [ ] **Skip tiny edits** - Prevent redundant re-measure on minor typing
-  ```ts
-  if (Math.abs(sizeDiff) <= 2 && !isUndoRedo) return oldDeco; // skip tiny edits
-  ```
 - [ ] **Return typed plugin key**
   ```ts
   const PAGINATION_PLUGIN = new PluginKey<DecorationSet>('pagination');
@@ -115,6 +111,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Promise chain guards** - Added early returns after async operations to prevent execution after cancellation
 - [x] **Storage type safety** - Fixed remeasureContent type declaration to be non-nullable for proper TypeScript safety
 - [x] **Large delete ghost gaps fix** - Ensure allowUnstableUpdate flag is reset even when page count doesn't change
+- [x] **requestIdleCallback optimization** - Use requestIdleCallback instead of setTimeout for better async timing
 
 ## Notes
 
