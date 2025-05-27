@@ -389,12 +389,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // Measure content height without changing container dimensions
 
       // Wait for layout to complete
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve())
-      );
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve())
-      );
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
       // Check if measurement was cancelled
       if (currentToken !== this.storage.measureToken && !isInitialMeasurement) {
@@ -765,9 +761,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           return;
 
         // Restore cursor and scroll position
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve())
-        );
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
         // Restore cursor position first (but not for large paste operations or during active typing)
         const timeSinceTyping = Date.now() - this.storage.lastTypingTime;
@@ -775,10 +769,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         
         if (savedCursorPos >= 0 && !this.storage.scrollToCursorAfterUpdate && !isActivelyTyping) {
           try {
-            const clampedPos = Math.min(
-              savedCursorPos,
-              this.editor.state.doc.content.size
-            );
+            const clampedPos = Math.min(savedCursorPos, this.editor.state.doc.content.size);
             const selection = TextSelection.create(
               this.editor.state.doc,
               clampedPos
@@ -900,6 +891,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           clearTimeout(resizeObserverTimeout);
         }
         resizeObserverTimeout = setTimeout(() => {
+          // Handle normal content changes after initialization
           remeasureContent(100);
         }, 50);
       }
@@ -1027,14 +1019,17 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 if (isLargePaste) {
                   // Set flag to scroll to cursor after pagination
                   extensionStorage.scrollToCursorAfterUpdate = true;
+                  // Handle normal content changes after initialization
                   extensionStorage.remeasureContent(50);
                   // Additional remeasure for very large pastes
                   if (sizeDiff > 10000) {
+                    // Handle normal content changes after initialization
                     extensionStorage.remeasureContent(300);
                   }
                 } else if (sizeChanged || isUndoRedo) {
                   // Handle all other content changes (including deletions and undo/redo)
                   const delay = sizeDiff < 0 ? 100 : 300; // Faster for deletions
+                  // Handle normal content changes after initialization
                   extensionStorage.remeasureContent(delay);
                 }
               }

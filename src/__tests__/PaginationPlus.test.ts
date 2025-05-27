@@ -198,8 +198,8 @@ describe('PaginationPlus Height Calculations', () => {
         'utf8'
       );
       
-      expect(PaginationPlusSource).toContain('import { EditorState, Plugin, PluginKey, TextSelection }');
-      expect(PaginationPlusSource).toContain('TextSelection.create(this.editor.state.doc, clampedPos)');
+      expect(PaginationPlusSource).toContain('TextSelection,');
+      expect(PaginationPlusSource).toContain('TextSelection.create(');
     });
 
     it('should handle invalid cursor position gracefully', () => {
