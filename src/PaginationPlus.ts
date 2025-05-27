@@ -890,12 +890,15 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             const maxScroll = targetNode.scrollHeight - targetNode.clientHeight;
             const isAtBottom = currentScrollTop >= maxScroll - 10; // 10px tolerance for "at bottom"
             
-            // Only restore scroll if the position is stable and we're not at the bottom
-            if (isScrollStable && !isAtBottom) {
+            // Don't restore scroll during active editing to prevent glitches
+            const isActivelyEditing = wasRecentlyTyping;
+            
+            // Only restore scroll if the position is stable, we're not at the bottom, and not actively editing
+            if (isScrollStable && !isAtBottom && !isActivelyEditing) {
               targetNode.scrollTop = savedScrollTop;
               targetNode.scrollLeft = savedScrollLeft;
             }
-            // If scroll has changed significantly or we're at bottom, leave it alone
+            // If scroll has changed significantly, at bottom, or actively editing, leave it alone
           }
         }
 
@@ -1100,12 +1103,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               (tr.getMeta("addToHistory") === false && tr.docChanged);
             
             if (tr.docChanged || isUndoRedo) {
-              // Track typing activity - small changes (1-2 chars) indicate active typing
-              const isTyping = Math.abs(sizeDiff) <= 2 && !isUndoRedo;
-              if (isTyping) {
+              // Track typing activity - small changes (1-2 chars) indicate active typing or deletion
+              const isTypingOrDeleting = Math.abs(sizeDiff) <= 2 && !isUndoRedo;
+              if (isTypingOrDeleting) {
                 extensionStorage.lastTypingTime = Date.now();
                 
-                // Simple fix: Use TipTap's scrollIntoView command
+                // Simple fix: Use TipTap's scrollIntoView command for both typing and deletion
                 requestAnimationFrame(() => {
                   requestAnimationFrame(() => {
                     try {
