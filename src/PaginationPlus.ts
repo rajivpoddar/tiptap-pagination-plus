@@ -84,6 +84,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       allowUnstableUpdate: false,
       // Flag to scroll to cursor after pagination (for large paste)
       scrollToCursorAfterUpdate: false,
+      // Track typing activity to avoid interfering with cursor during active typing
+      lastTypingTime: 0,
+      typingThreshold: 1000, // 1 second of inactivity before allowing cursor restoration
     };
   },
 
@@ -137,7 +140,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         z-index: 1;
       }
       .rm-with-pagination .ProseMirror-selectednode {
-        outline: 2px solid #8cf;
+        outline: none;
       }
       .rm-with-pagination .rm-page-break.last-page ~ .rm-page-break,
       .rm-with-pagination .rm-page-break.hidden {
@@ -766,8 +769,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           requestAnimationFrame(() => resolve())
         );
 
-        // Restore cursor position first (but not for large paste operations)
-        if (savedCursorPos >= 0 && !this.storage.scrollToCursorAfterUpdate) {
+        // Restore cursor position first (but not for large paste operations or during active typing)
+        const timeSinceTyping = Date.now() - this.storage.lastTypingTime;
+        const isActivelyTyping = timeSinceTyping < this.storage.typingThreshold;
+        
+        if (savedCursorPos >= 0 && !this.storage.scrollToCursorAfterUpdate && !isActivelyTyping) {
           try {
             const clampedPos = Math.min(
               savedCursorPos,
@@ -993,8 +999,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               tr.getMeta("appendedTransaction") ||
               (tr.getMeta("addToHistory") === false && tr.docChanged);
             
-
             if (tr.docChanged || isUndoRedo) {
+              // Track typing activity - small changes (1-2 chars) indicate active typing
+              const isTyping = Math.abs(sizeDiff) <= 2 && !isUndoRedo;
+              if (isTyping) {
+                extensionStorage.lastTypingTime = Date.now();
+              }
+              
               // Document changed or undo/redo operation
               
               // Update lastDocSize for accurate future calculations
