@@ -70,7 +70,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ### Code Style
 - [ ] **Early-exit guards** - Refactor nested `if`s in `measureAndUpdatePages` to early returns
-- [ ] **Named constants** - Replace magic numbers (48, 20, 5) with named constants
+- [x] **Named constants** - Replace magic numbers (48, 20, 5) with named constants
 - [ ] **Simplify conditional logic** - Reduce 300-line nested conditionals
 
 ### CSS Improvements
@@ -113,6 +113,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Large delete ghost gaps fix** - Ensure allowUnstableUpdate flag is reset even when page count doesn't change
 - [x] **requestIdleCallback optimization** - Use requestIdleCallback instead of setTimeout for better async timing
 - [x] **Typed plugin key** - Added explicit DecorationSet generic type to PluginKey for better TypeScript safety
+- [x] **Named constants** - Replaced magic numbers in layout calculations with descriptive named constants
 
 ## Notes
 

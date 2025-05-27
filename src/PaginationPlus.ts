@@ -102,6 +102,21 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Options are available as this.options
 
+    // Named constants for layout calculations
+    const LAYOUT_CONSTANTS = {
+      CONTENT_EDITABLE_PADDING: 48, // Content area padding
+      FOOTER_WRAPPER_EXTRA_HEIGHT: 20, // 10px top + 10px bottom padding
+      HEADER_MARGIN_CONTRIBUTION: 48, // Header margin per gap
+      ONE_FRAME_MS: 16, // One animation frame duration
+      DELETION_DELAY_MS: 100, // Faster remeasure for deletions
+      NORMAL_TYPING_DELAY_MS: 300, // Standard remeasure delay
+      LARGE_PASTE_THRESHOLD: 1000, // Size diff for large paste detection
+      VERY_LARGE_PASTE_THRESHOLD: 10000, // Size diff for very large paste
+      TYPING_THRESHOLD_MS: 1000, // Inactivity before cursor restoration
+      GRACE_PERIOD_MS: 500, // Grace period after initialization
+      LARGE_CHANGE_THRESHOLD: 50, // Size diff for height lock reset
+    } as const;
+
     const _pageHeaderHeight = this.options.pageHeaderHeight;
     const _pageHeight = this.options.pageHeight - _pageHeaderHeight * 2;
 
@@ -222,30 +237,28 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Calculate paginated height based on page count
     const calculatePaginatedHeight = (pageCount: number): number => {
-      const contentEditablePadding = 48;
-      const footerWrapperExtraHeight = 20; // 10px top + 10px bottom padding
+      const { CONTENT_EDITABLE_PADDING, FOOTER_WRAPPER_EXTRA_HEIGHT, HEADER_MARGIN_CONTRIBUTION } = LAYOUT_CONSTANTS;
 
       if (pageCount === 1) {
         // For single page, just add padding to page height + footer wrapper extra height
         const singlePageHeight =
-          contentEditablePadding + this.options.pageHeight + footerWrapperExtraHeight;
+          CONTENT_EDITABLE_PADDING + this.options.pageHeight + FOOTER_WRAPPER_EXTRA_HEIGHT;
         return singlePageHeight;
       }
 
       const visibleGaps = pageCount - 1;
-      const headerMarginContribution = 48;
 
       // Height calculation breakdown (matches cumulative analysis):
       // - Content padding: 48px (fixed)
-      // - Page heights: 842px × number of pages (includes headers/footers)
-      // - Gaps: 20px × number of gaps
+      // - Page heights: configured page height × number of pages (includes headers/footers)
+      // - Gaps: configured gap size × number of gaps
       // - Header margins: 48px × number of gaps
       // - Footer wrapper extra height: 20px × number of pages
-      let total = contentEditablePadding; // 48
-      total += this.options.pageHeight * pageCount; // 842 * pages
-      total += this.options.pageGap * visibleGaps; // 20 * gaps
-      total += headerMarginContribution * visibleGaps; // 48 * gaps (header margins)
-      total += footerWrapperExtraHeight * pageCount; // 20 * pages (footer wrapper padding)
+      let total = CONTENT_EDITABLE_PADDING;
+      total += this.options.pageHeight * pageCount;
+      total += this.options.pageGap * visibleGaps;
+      total += HEADER_MARGIN_CONTRIBUTION * visibleGaps;
+      total += FOOTER_WRAPPER_EXTRA_HEIGHT * pageCount;
 
       return total;
     };
@@ -425,9 +438,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           // 5. Wait for any pending async operations
           new Promise((resolve) => {
             if ('requestIdleCallback' in window) {
-              requestIdleCallback(resolve, { timeout: 16 });
+              requestIdleCallback(resolve, { timeout: LAYOUT_CONSTANTS.ONE_FRAME_MS });
             } else {
-              setTimeout(resolve, 16); // Fallback for older browsers
+              setTimeout(resolve, LAYOUT_CONSTANTS.ONE_FRAME_MS); // Fallback for older browsers
             }
           }),
         ]);
@@ -660,7 +673,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           const timeSinceSetup = this.storage.initialSetupCompleteTime
             ? Date.now() - this.storage.initialSetupCompleteTime
             : Infinity;
-          const inGracePeriod = timeSinceSetup < 500;
+          const inGracePeriod = timeSinceSetup < LAYOUT_CONSTANTS.GRACE_PERIOD_MS;
 
           if (!inGracePeriod) {
             // Check if height has actually changed to avoid unnecessary updates
@@ -929,7 +942,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       const timeSinceSetup = this.storage.initialSetupCompleteTime
         ? Date.now() - this.storage.initialSetupCompleteTime
         : 0;
-      const inGracePeriod = timeSinceSetup < 500; // 500ms grace period
+      const inGracePeriod = timeSinceSetup < LAYOUT_CONSTANTS.GRACE_PERIOD_MS; // 500ms grace period
 
       // Only respond to resize events after initial setup is complete
       // and we're outside the grace period
@@ -1089,7 +1102,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   // Set flag to scroll to cursor after pagination
                   extensionStorage.scrollToCursorAfterUpdate = true;
                   // Handle normal content changes after initialization
-                  extensionStorage.remeasureContent(50);
+                  extensionStorage.remeasureContent(50); // Keep 50ms for large paste responsiveness
                   // Additional remeasure for very large pastes
                   if (sizeDiff > 10000) {
                     // Handle normal content changes after initialization
