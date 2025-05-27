@@ -775,6 +775,14 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         // Restore cursor and scroll position
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+        // Check cancellation after async operation
+        if (
+          currentToken !== this.storage.measureToken &&
+          !isInitialMeasurement
+        ) {
+          return;
+        }
+
         // Restore cursor position first (but not for large paste operations or during active typing)
         const timeSinceTyping = Date.now() - this.storage.lastTypingTime;
         const isActivelyTyping = timeSinceTyping < this.storage.typingThreshold;

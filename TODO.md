@@ -16,8 +16,8 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
     extensionStorage.allowUnstableUpdate = false;
   }
   ```
-- [ ] **Clear ResizeObserver timeout** - Ensure timeout is cleared if extension destroyed before it fires
-- [ ] **Guard Promise chains** - Add early returns in `measureAndUpdatePages` async body
+- [x] **Clear ResizeObserver timeout** - Ensure timeout is cleared if extension destroyed before it fires
+- [x] **Guard Promise chains** - Add early returns in `measureAndUpdatePages` async body
 
 ### Edge Cases
 - [x] **Cursor position clamping** - Already fixed with `Math.min(savedCursorPos, this.editor.state.doc.content.size)`
@@ -112,6 +112,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Async pattern consistency** - Standardized requestAnimationFrame Promises
 - [x] **Test coverage** - Added missing comments and patterns expected by tests
 - [x] **ResizeObserver RAF throttling** - Improved performance by using requestAnimationFrame instead of setTimeout
+- [x] **Promise chain guards** - Added early returns after async operations to prevent execution after cancellation
 
 ## Notes
 
