@@ -1086,6 +1086,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
             // Only update decorations for explicit pagination updates (not normal typing)
             if (tr.getMeta(pagination_meta_key)) {
+              // Clear allowUnstableUpdate flag on any decoration refresh to prevent ghost gaps
+              if (extensionStorage.allowUnstableUpdate) {
+                extensionStorage.allowUnstableUpdate = false;
+              }
+              
               const widgetList = createDecoration(
                 newState,
                 pageOptions,

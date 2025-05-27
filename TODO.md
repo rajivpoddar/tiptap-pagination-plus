@@ -10,9 +10,9 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
   // Track destroyed state and guard async operations
   if (this.destroyed) return;
   ```
-- [ ] **Reset `allowUnstableUpdate` flag** - Clear flag on any decoration refresh to prevent ghost gaps
+- [x] **Reset `allowUnstableUpdate` flag** - Clear flag on any decoration refresh to prevent ghost gaps
   ```ts
-  if (extensionStorage.allowUnstableUpdate && isHeightStable) {
+  if (extensionStorage.allowUnstableUpdate) {
     extensionStorage.allowUnstableUpdate = false;
   }
   ```
@@ -106,6 +106,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Better initialization logic** - Mark extension as initialized after successful measurement
 - [x] **Repagination stability** - Fixed lifecycle checks that prevented typing repagination
 - [x] **Copy/paste regression fix** - Reverted height measurement to prevent extra pages
+- [x] **Ghost gaps prevention** - Reset allowUnstableUpdate flag on decoration refresh
 - [x] **All 22 tests passing** - Fixed cursor validation and async patterns
 - [x] **Cursor position bounds checking** - Added `Math.min` validation
 - [x] **Async pattern consistency** - Standardized requestAnimationFrame Promises
