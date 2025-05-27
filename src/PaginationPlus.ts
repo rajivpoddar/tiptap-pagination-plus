@@ -90,7 +90,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // Extension lifecycle tracking
       destroyed: false,
       // Type the remeasureContent function for proper type safety
-      remeasureContent: null as ((delay?: number) => void) | null,
+      remeasureContent: (() => {}) as (delay?: number) => void,
       // Store plugin instance ID for cleanup
       pluginInstanceId: null as string | null,
     };
