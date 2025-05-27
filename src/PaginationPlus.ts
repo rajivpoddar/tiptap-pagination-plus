@@ -385,6 +385,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         this.storage.positionSaved = true;
       }
 
+      // Use saved positions for restoration 
+      const savedCursorPos = this.storage.savedCursorPos;
+      const savedScrollTop = this.storage.savedScrollTop;
+      const savedScrollLeft = this.storage.savedScrollLeft;
+
       // Measure content height without changing container dimensions
 
       // Wait for layout to complete
@@ -602,6 +607,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
         // Use initial calculation for now
         let pageCount = initialPageCount;
+        
 
         // Track stable height measurements
         if (
@@ -652,6 +658,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             // Check if height has actually changed to avoid unnecessary updates
             const heightChanged =
               Math.abs(naturalHeight - this.storage.lastMeasuredHeight) > 5; // 5px tolerance
+            
 
             if (heightChanged) {
               this.storage.lastMeasuredHeight = naturalHeight;
@@ -660,11 +667,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               const withinLockedRange =
                 naturalHeight >= this.storage.lockedHeightRange.min &&
                 naturalHeight <= this.storage.lockedHeightRange.max;
+              
 
               // Update page count if changed
               if (pageCount !== this.storage.correctPageCount) {
                 // Update if height is stable AND outside locked range, OR if unstable update is allowed
                 const shouldUpdate = (!withinLockedRange && isHeightStable) || this.storage.allowUnstableUpdate;
+                
                 if (shouldUpdate) {
                   this.storage.correctPageCount = pageCount;
 
@@ -759,10 +768,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         if (currentToken !== this.storage.measureToken && !isInitialMeasurement)
           return;
 
-        // Capture fresh positions right before restoration (in case user moved during measurement)
-        const savedCursorPos = this.storage.savedCursorPos;
-        const savedScrollTop = this.storage.savedScrollTop;
-        const savedScrollLeft = this.storage.savedScrollLeft;
+        // Use positions captured at the beginning of measurement
 
         // Restore cursor and scroll position
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -843,17 +849,14 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           this.storage.initialSetupCompleteTime = Date.now();
         }
       } catch (error) {
-        console.log("⚠️ Content readiness detection failed:", error);
         // Fallback: continue with the rest of the function anyway
       }
     };
 
     // Debounced remeasure function for content changes with cancellation
     const remeasureContent = (delay: number = 100) => {
-      // Only prevent new operations if destroyed
-      if (this.storage.destroyed) {
-        return;
-      }
+      // Continue with remeasurement even if destroyed flag is set
+      // This handles the case where React/TipTap destroys extensions during active operations
 
       if (this.storage.remeasureTimer) {
         clearTimeout(this.storage.remeasureTimer);
@@ -934,10 +937,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         document.fonts.ready.then(async () => {
           // Fonts loaded, performing initial measurement
           await measureAndUpdatePages(() => {
-            // Only check destroyed for non-initial callback
-            if (this.storage.destroyed && !this.storage.isInitialMeasurement) {
-              return;
-            }
+            // For initial measurement, always complete initialization even if destroyed flag is set
+            // This handles the case where TipTap destroys/recreates extensions during setup
             this.storage.isInitialized = true;
             if (this.options.onReady) {
               this.options.onReady();
@@ -947,10 +948,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       } else {
         // Fonts already loaded
         measureAndUpdatePages().then(() => {
-          // Only check destroyed for non-initial callback
-          if (this.storage.destroyed && !this.storage.isInitialMeasurement) {
-            return;
-          }
+          // For initial measurement, always complete initialization even if destroyed flag is set
+          // This handles the case where TipTap destroys/recreates extensions during setup
           this.storage.isInitialized = true;
           if (this.options.onReady) {
             this.options.onReady();
@@ -1040,8 +1039,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               lastDocSize = newState.doc.content.size;
 
               if (extensionStorage.isInitialized) {
+                
                 // For any significant content change or undo/redo, reset height lock to allow page count adjustments
                 const shouldResetLock = Math.abs(sizeDiff) > 50 || isUndoRedo || sizeDiff < 0;
+                
                 if (shouldResetLock) {
                   extensionStorage.lockedHeightRange = { min: 0, max: 0 };
                 }
@@ -1073,7 +1074,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
             // Only update decorations for explicit pagination updates (not normal typing)
             if (tr.getMeta(pagination_meta_key)) {
-
               const widgetList = createDecoration(
                 newState,
                 pageOptions,
