@@ -904,7 +904,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     );
 
     // Use ResizeObserver for efficient content change detection
-    let resizeObserverTimeout: NodeJS.Timeout | null = null;
+    let rafId: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
       const timeSinceSetup = this.storage.initialSetupCompleteTime
         ? Date.now() - this.storage.initialSetupCompleteTime
@@ -918,22 +918,22 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         !this.storage.isInitialMeasurement &&
         !inGracePeriod
       ) {
-        // Debounce resize observer to prevent excessive measurements
-        if (resizeObserverTimeout) {
-          clearTimeout(resizeObserverTimeout);
+        // Throttle with requestAnimationFrame for better performance
+        if (rafId) {
+          cancelAnimationFrame(rafId);
         }
-        resizeObserverTimeout = setTimeout(() => {
+        rafId = requestAnimationFrame(() => {
           // Handle normal content changes after initialization
-          remeasureContent(100);
-        }, 50);
+          remeasureContent(80);
+        });
       }
     });
     resizeObserver.observe(targetNode);
 
     // Track cleanup
     this.storage.cleanups.push(() => {
-      if (resizeObserverTimeout) {
-        clearTimeout(resizeObserverTimeout);
+      if (rafId) {
+        cancelAnimationFrame(rafId);
       }
       resizeObserver.disconnect();
     });

@@ -44,7 +44,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
   **Note**: Experimented with height auto approach but caused copy/paste regressions
 
 ### Throttling Improvements
-- [ ] **Throttle ResizeObserver with RAF**
+- [x] **Throttle ResizeObserver with RAF**
   ```ts
   const resizeObserver = new ResizeObserver(entries => {
     if (this._resizeFrame) cancelAnimationFrame(this._resizeFrame);
@@ -111,6 +111,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Cursor position bounds checking** - Added `Math.min` validation
 - [x] **Async pattern consistency** - Standardized requestAnimationFrame Promises
 - [x] **Test coverage** - Added missing comments and patterns expected by tests
+- [x] **ResizeObserver RAF throttling** - Improved performance by using requestAnimationFrame instead of setTimeout
 
 ## Notes
 
