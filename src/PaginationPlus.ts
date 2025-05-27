@@ -694,6 +694,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                     this.editor.view.state.tr.setMeta(pagination_meta_key, true)
                   );
                 }
+              } else {
+                // Clear allowUnstableUpdate flag even if page count didn't change
+                // This prevents ghost gaps after large deletes that don't change page count
+                if (this.storage.allowUnstableUpdate) {
+                  this.storage.allowUnstableUpdate = false;
+                }
               }
             }
           }

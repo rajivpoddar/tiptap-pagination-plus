@@ -21,7 +21,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ### Edge Cases
 - [x] **Cursor position clamping** - Already fixed with `Math.min(savedCursorPos, this.editor.state.doc.content.size)`
-- [ ] **Large delete ghost gaps** - Fix `allowUnstableUpdate` not being reset properly
+- [x] **Large delete ghost gaps** - Fix `allowUnstableUpdate` not being reset properly
 
 ### Type Safety
 - [x] **Add missing storage type** - Declare `remeasureContent` in `addStorage()` return type
@@ -114,6 +114,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **ResizeObserver RAF throttling** - Improved performance by using requestAnimationFrame instead of setTimeout
 - [x] **Promise chain guards** - Added early returns after async operations to prevent execution after cancellation
 - [x] **Storage type safety** - Fixed remeasureContent type declaration to be non-nullable for proper TypeScript safety
+- [x] **Large delete ghost gaps fix** - Ensure allowUnstableUpdate flag is reset even when page count doesn't change
 
 ## Notes
 
