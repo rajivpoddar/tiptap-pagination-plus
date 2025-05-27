@@ -91,6 +91,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       destroyed: false,
       // Type the remeasureContent function for proper type safety
       remeasureContent: null as ((delay?: number) => void) | null,
+      // Store plugin instance ID for cleanup
+      pluginInstanceId: null as string | null,
     };
   },
 
@@ -844,9 +846,14 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         }
 
         // Clear initial measurement flag after first successful measurement
-        if (isInitialMeasurement && this.storage.correctPageCount > 1) {
+        if (isInitialMeasurement) {
           this.storage.isInitialMeasurement = false;
           this.storage.initialSetupCompleteTime = Date.now();
+          
+          // Mark extension as initialized after any successful initial measurement
+          if (!this.storage.isInitialized) {
+            this.storage.isInitialized = true;
+          }
         }
       } catch (error) {
         // Fallback: continue with the rest of the function anyway
@@ -1001,9 +1008,14 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     const extensionStorage = this.storage;
     let lastDocSize = 0;
 
+    const pluginInstanceId = `${Date.now()}-${Math.random()}`;
+    
+    // Store the plugin instance ID in extension storage for cleanup tracking
+    this.storage.pluginInstanceId = pluginInstanceId;
+
     return [
       new Plugin({
-        key: new PluginKey("pagination"),
+        key: new PluginKey(`pagination-${pluginInstanceId}`),
 
         state: {
           init(_, state) {

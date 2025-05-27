@@ -5,7 +5,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
 ### Memory Leaks & Stability
-- [ ] **Add destroyed flag** - Prevent async operations after extension destroy
+- [x] **Add destroyed flag** - Prevent async operations after extension destroy
   ```ts
   // Track destroyed state and guard async operations
   if (this.destroyed) return;
@@ -41,6 +41,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
   paginationWrapper.style.visibility = '';
   ```
   **Impact**: Eliminates hundreds of reflows, significant performance improvement
+  **Note**: Experimented with height auto approach but caused copy/paste regressions
 
 ### Throttling Improvements
 - [ ] **Throttle ResizeObserver with RAF**
@@ -100,6 +101,11 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ## ✅ Recently Completed
 
+- [x] **Memory leak protection** - Added destroyed flag and proper cleanup tracking
+- [x] **Plugin instance ID tracking** - Unique plugin IDs for better lifecycle management
+- [x] **Better initialization logic** - Mark extension as initialized after successful measurement
+- [x] **Repagination stability** - Fixed lifecycle checks that prevented typing repagination
+- [x] **Copy/paste regression fix** - Reverted height measurement to prevent extra pages
 - [x] **All 22 tests passing** - Fixed cursor validation and async patterns
 - [x] **Cursor position bounds checking** - Added `Math.min` validation
 - [x] **Async pattern consistency** - Standardized requestAnimationFrame Promises
