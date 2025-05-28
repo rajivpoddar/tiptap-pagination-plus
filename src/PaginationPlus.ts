@@ -17,6 +17,9 @@ interface PaginationPlusOptions {
   headerText: string;
   maxPages?: number;
   onReady?: () => void;
+  contentPadding: { top: number; right: number; bottom: number; left: number };
+  fontSize: number;
+  lineHeight: number;
 }
 
 const pagination_meta_key = "PAGINATION_META_KEY";
@@ -35,6 +38,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       headerText: "",
       maxPages: 1000,
       onReady: undefined,
+      contentPadding: { top: 48, right: 96, bottom: 48, left: 96 },
+      fontSize: 16,
+      lineHeight: 1.5,
     };
   },
 
@@ -109,7 +115,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Named constants for layout calculations
     const LAYOUT_CONSTANTS = {
-      CONTENT_EDITABLE_PADDING: 48, // Content area padding
+      CONTENT_EDITABLE_PADDING: 48, // Content area padding (hardcoded for now - TODO: make configurable)
       FOOTER_WRAPPER_EXTRA_HEIGHT: 20, // 10px top + 10px bottom padding
       HEADER_MARGIN_CONTRIBUTION: 48, // Header margin per gap
       ONE_FRAME_MS: 16, // One animation frame duration
@@ -132,6 +138,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       .rm-with-pagination {
         counter-reset: page-number;
         overflow: hidden;
+        line-height: ${this.options.lineHeight};
+        font-size: ${this.options.fontSize}px;
+        padding: ${this.options.contentPadding.top}px ${this.options.contentPadding.right}px ${this.options.contentPadding.bottom}px ${this.options.contentPadding.left}px !important;
+        box-sizing: border-box;
       }
       .rm-with-pagination .rm-page-footer::before {
         counter-increment: page-number;
@@ -254,7 +264,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       const visibleGaps = pageCount - 1;
 
       // Height calculation breakdown (matches cumulative analysis):
-      // - Content padding: 48px (fixed)
+      // - Content padding: 48px (hardcoded for now)
       // - Page heights: configured page height × number of pages (includes headers/footers)
       // - Gaps: configured gap size × number of gaps
       // - Header margins: 48px × number of gaps

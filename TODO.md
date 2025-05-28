@@ -78,6 +78,12 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [ ] **CSS-in-JS with typing** - If keeping dynamic CSS, add proper typing
 - [ ] **Tree-shaking support** - Ensure CSS rules can be tree-shaken
 
+### Configuration Architecture
+- [ ] **Configurable padding/typography** - Make contentPadding, fontSize, lineHeight configurable without breaking height calculations
+  - Currently hardcoded to 48px padding and 24px line-height for stable pagination
+  - Height calculation algorithm needs to properly account for configurable values
+  - Should allow developers to customize editor appearance while maintaining accurate page breaks
+
 ## 🔵 Future Considerations (Major Changes)
 
 ### Alternative Architecture (Only if Performance Issues)
