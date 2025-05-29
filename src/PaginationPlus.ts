@@ -105,6 +105,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       offsetFromBottom: undefined as number | undefined,
       blockScrollIntoView: false,
       savedPageCountBeforeDeletion: undefined as number | undefined,
+      // Cursor position in viewport for typing scenarios
+      cursorViewportOffset: undefined as number | undefined,
     };
   },
 
@@ -809,6 +811,41 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           delete this.storage.offsetFromBottom;
           delete this.storage.savedPageCountBeforeDeletion;
         }
+        
+        // Restore cursor position in viewport for typing scenarios
+        if (this.storage.cursorViewportOffset !== undefined) {
+          requestAnimationFrame(() => {
+            try {
+              // Get current cursor position
+              const coords = this.editor.view.coordsAtPos(this.editor.state.selection.from);
+              const editorRect = targetNode.getBoundingClientRect();
+              const currentCursorOffset = coords.top - editorRect.top;
+              
+              // Calculate how much we need to scroll to restore the cursor position
+              const scrollAdjustment = currentCursorOffset - this.storage.cursorViewportOffset!;
+              
+              
+              // Apply the scroll adjustment
+              const newScrollTop = targetNode.scrollTop + scrollAdjustment;
+              const maxScrollTop = targetNode.scrollHeight - targetNode.clientHeight;
+              targetNode.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+              
+              
+              // Clean up
+              delete this.storage.cursorViewportOffset;
+              // Clear block after restoration
+              requestAnimationFrame(() => {
+                this.storage.blockScrollIntoView = false;
+              });
+            } catch (e) {
+              // If we can't restore position, fall back to ensuring cursor is visible
+              if (!this.storage.blockScrollIntoView) {
+                this.editor.commands.scrollIntoView();
+              }
+              delete this.storage.cursorViewportOffset;
+            }
+          });
+        }
 
         // Check for content overflow after setting height and trigger auto-fix
         requestAnimationFrame(() => {
@@ -926,8 +963,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           const timeSinceTyping = Date.now() - this.storage.lastTypingTime;
           const wasRecentlyTyping = timeSinceTyping < 2000; // 2 seconds
           
-          if (wasRecentlyTyping) {
-            // If we were typing recently, ensure cursor stays visible
+          if (wasRecentlyTyping && !this.storage.cursorViewportOffset) {
+            // Only use scrollIntoView if we're not manually managing cursor position
             requestAnimationFrame(() => {
               try {
                 if (!this.storage.blockScrollIntoView) {
@@ -1171,9 +1208,38 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               if (isTypingOrDeleting) {
                 extensionStorage.lastTypingTime = Date.now();
                 
+                const node = extensionStorage.editor.view.dom as HTMLElement;
+                
+                // For typing (positive sizeDiff), save cursor position in viewport
+                if (sizeDiff > 0) {
+                  // Check if this is likely an Enter key press (creates new paragraph)
+                  // When Enter is pressed, it typically adds a paragraph node
+                  const isLikelyEnterKey = tr.steps.some(step => {
+                    if (step.toJSON && step.toJSON().stepType === 'replace') {
+                      return true;
+                    }
+                    return false;
+                  });
+                  
+                  // Check if cursor is at the end of the document
+                  const cursorAtEnd = tr.selection.from >= tr.doc.content.size - 1;
+                  
+                  
+                  // Don't preserve scroll for Enter key at end of document
+                  if (!isLikelyEnterKey || !cursorAtEnd) {
+                    // Get cursor position in viewport
+                    const coords = extensionStorage.editor.view.coordsAtPos(tr.selection.from);
+                    const editorRect = node.getBoundingClientRect();
+                    const cursorOffsetInViewport = coords.top - editorRect.top;
+                    
+                    
+                    // Save this offset for restoration after repagination
+                    extensionStorage.cursorViewportOffset = cursorOffsetInViewport;
+                    extensionStorage.blockScrollIntoView = true;
+                  }
+                }
                 // For deletions that might cause page shrinkage, save scroll position
-                if (sizeDiff < 0) {
-                  const node = extensionStorage.editor.view.dom as HTMLElement;
+                else if (sizeDiff < 0) {
                   // Only save if we haven't already saved for this deletion cycle
                   if (extensionStorage.offsetFromBottom === undefined) {
                     const offset = node.scrollHeight - node.clientHeight - node.scrollTop;
@@ -1185,21 +1251,23 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   }
                 }
                 
-                // Simple fix: Use TipTap's scrollIntoView command for both typing and deletion
-                requestAnimationFrame(() => {
+                // Don't use scrollIntoView for typing - we'll handle it manually
+                if (!extensionStorage.blockScrollIntoView) {
                   requestAnimationFrame(() => {
-                    try {
-                      const editor = extensionStorage.editor;
-                      if (!editor || extensionStorage.blockScrollIntoView) {
-                        return;
+                    requestAnimationFrame(() => {
+                      try {
+                        const editor = extensionStorage.editor;
+                        if (!editor) {
+                          return;
+                        }
+                        
+                        editor.commands.scrollIntoView();
+                      } catch (e) {
+                        // Ignore scroll errors
                       }
-                      
-                      editor.commands.scrollIntoView();
-                    } catch (e) {
-                      // Ignore scroll errors
-                    }
+                    });
                   });
-                });
+                }
               }
               
               // Document changed or undo/redo operation

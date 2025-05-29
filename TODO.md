@@ -4,6 +4,18 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
+### Scroll Position During Line Wrap
+- [x] **Typing causes scroll jump when line wraps** - Fixed! Cursor position now maintained in viewport
+  
+  **Solution Implemented**:
+  - Detect when typing (not Enter key) causes content changes
+  - Save cursor position relative to viewport before repagination
+  - Block automatic `scrollIntoView` during typing operations
+  - Restore cursor to same viewport position after repagination
+  - Special handling to allow Enter key at end of document to work normally
+
+## ~~🔴 High Priority - Bug Fixes (Do Soon)~~ COMPLETED
+
 ### Scroll Glitch on Backspace
 - [x] **Backspace scroll glitch at end of document** - Fixed! Scroll position now preserved during page reduction
   
@@ -147,6 +159,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Typed plugin key** - Added explicit DecorationSet generic type to PluginKey for better TypeScript safety
 - [x] **Named constants** - Replaced magic numbers in layout calculations with descriptive named constants
 - [x] **Backspace scroll glitch fix** - Implemented scroll position preservation during page reduction using offset-from-bottom tracking
+- [x] **Typing line wrap scroll fix** - Implemented cursor viewport position preservation during typing that causes line wrapping
 
 ## Notes
 
