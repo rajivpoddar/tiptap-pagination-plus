@@ -52,6 +52,33 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         this.editor.commands.scrollIntoView();
         return true;
       },
+      'Backspace': () => {
+        // Prevent removing pagination when document is empty
+        const { doc, selection } = this.editor.state;
+        
+        // Check if document is empty or nearly empty
+        const isEmpty = doc.content.size <= 2; // Empty doc has size 2
+        const isAtStart = selection.from === 0 || selection.from === 1;
+        
+        if (isEmpty && isAtStart) {
+          // Document is empty and cursor at start - prevent default backspace
+          // This ensures pagination (header/footer) remains visible
+          
+          // Force page count to 1 if it somehow got set to 0
+          if (this.storage.correctPageCount < 1) {
+            this.storage.correctPageCount = 1;
+            // Trigger decoration update
+            this.editor.view.dispatch(
+              this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+            );
+          }
+          
+          return true; // Prevent default backspace behavior
+        }
+        
+        // Let default backspace behavior handle all other cases
+        return false;
+      },
     };
   },
 
@@ -675,7 +702,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           this.storage.correctPageCount === 1 &&
           pageCount > 1
         ) {
-          this.storage.correctPageCount = pageCount;
+          this.storage.correctPageCount = Math.max(1, pageCount);
           this.storage.lastMeasuredHeight = naturalHeight;
           // Lock in an acceptable height range (±0.5 page tolerance)
           // Tighter tolerance to prevent unnecessary page count changes
@@ -719,7 +746,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 
                 if (shouldUpdate) {
                   const oldPageCount = this.storage.correctPageCount;
-                  this.storage.correctPageCount = pageCount;
+                  this.storage.correctPageCount = Math.max(1, pageCount);
 
 
                   // Clear the unstable update flag after use
@@ -869,7 +896,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             const newHeight = calculatePaginatedHeight(newPageCount);
             // Apply corrected height and update storage
             targetNode.style.height = `${newHeight}px`;
-            this.storage.correctPageCount = newPageCount;
+            this.storage.correctPageCount = Math.max(1, newPageCount);
 
             // Trigger decoration update for new page count
             this.editor.view.dispatch(
@@ -896,7 +923,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 const safetyPageCount = newPageCount + 1;
                 const safetyHeight = calculatePaginatedHeight(safetyPageCount);
                 targetNode.style.height = `${safetyHeight}px`;
-                this.storage.correctPageCount = safetyPageCount;
+                this.storage.correctPageCount = Math.max(1, safetyPageCount);
 
                 // Final decoration update
                 this.editor.view.dispatch(
@@ -1353,8 +1380,8 @@ function createDecoration(
       const _pageHeight = pageOptions.pageHeight - _pageHeaderHeight * 2;
       const _pageBreakBackground = pageOptions.pageBreakBackground;
 
-      // Use stored page count
-      const pages = extensionStorage?.correctPageCount || 1;
+      // Use stored page count, but ensure at least 1 page for empty documents
+      const pages = Math.max(1, extensionStorage?.correctPageCount || 1);
       const finalPageCount = Math.min(pages, pageOptions.maxPages || 1000);
 
       const breakerWidth = view.dom.clientWidth;
@@ -1389,8 +1416,8 @@ function createDecoration(
           }
           existingPagination.appendChild(fragment);
         } else if (finalPageCount < currentPageCount) {
-          // Remove excess pages
-          while (existingPagination.children.length > finalPageCount) {
+          // Remove excess pages, but ensure at least 1 page remains
+          while (existingPagination.children.length > Math.max(1, finalPageCount)) {
             existingPagination.lastChild!.remove();
           }
         }

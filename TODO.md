@@ -4,6 +4,15 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
+### Empty Document Pagination
+- [x] **Empty document loses pagination** - Fixed! Document always maintains at least one page
+  
+  **Solution Implemented**:
+  - Added Backspace handler to prevent removing pagination when document is empty
+  - Ensures `correctPageCount` is never less than 1 with `Math.max(1, ...)` guards
+  - Prevents removing the last page in decoration updates
+  - Handles edge case of multiple select-all + delete operations
+
 ### Scroll Position During Line Wrap
 - [x] **Typing causes scroll jump when line wraps** - Fixed! Cursor position now maintained in viewport
   
@@ -160,6 +169,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **Named constants** - Replaced magic numbers in layout calculations with descriptive named constants
 - [x] **Backspace scroll glitch fix** - Implemented scroll position preservation during page reduction using offset-from-bottom tracking
 - [x] **Typing line wrap scroll fix** - Implemented cursor viewport position preservation during typing that causes line wrapping
+- [x] **Empty document pagination fix** - Implemented safeguards to ensure empty documents always show at least one page with header/footer
 
 ## Notes
 
