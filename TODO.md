@@ -4,6 +4,37 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
+### Scroll Glitch on Backspace
+- [ ] **Backspace scroll glitch at end of document** - When cursor is on last page and user presses backspace, scroll position gets reset
+  
+  **Investigation Summary**:
+  - **Scenario**: Go to end of doc, press Enter to create new page, then press Backspace during repagination
+  - **Root Cause**: Multiple interacting factors:
+    1. When backspace causes page reduction (e.g., 6→5 pages), container height shrinks
+    2. Browser automatically clamps scroll to new maximum (e.g., 3896.5 → 3147)
+    3. The glitch only happens when cursor is in lines 1-5 of the viewport (not lines 6+)
+    4. `scrollIntoView` is called multiple times during repagination, fighting with scroll position
+  
+  **Attempted Solutions**:
+  1. ✗ Saving scroll position earlier in transaction - scroll already reset by then
+  2. ✗ Native keydown capture - captured correct scroll but still glitched
+  3. ✗ Continuous scroll enforcement with RAF - detected reset but couldn't prevent it
+  4. ✗ Setting overflow:hidden during pagination - didn't prevent the reset
+  5. ✗ Deferring height reduction until after scroll unlock - complex interaction with scrollIntoView
+  6. ✗ Viewport-based detection (top 5 lines) - detection worked but prevention failed
+  
+  **Key Insights**:
+  - The scroll reset happens because max scrollable area shrinks when height reduces
+  - TipTap's `scrollIntoView` is called in multiple places during repagination
+  - The issue is specific to cursor position in viewport (lines 1-5) not document position
+  - Interaction between height changes, scroll clamping, and scrollIntoView creates the glitch
+  
+  **Potential Solutions to Explore**:
+  - Completely disable automatic scrollIntoView during backspace operations
+  - Maintain minimum container height during deletions to prevent scroll clamping
+  - Custom scroll management that bypasses browser's automatic adjustments
+  - Investigate if ProseMirror decorations are triggering unexpected reflows
+
 ### Memory Leaks & Stability
 - [x] **Add destroyed flag** - Prevent async operations after extension destroy
   ```ts
