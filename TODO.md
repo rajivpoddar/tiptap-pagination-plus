@@ -5,7 +5,13 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
 ### Scroll Glitch on Backspace
-- [ ] **Backspace scroll glitch at end of document** - When cursor is on last page and user presses backspace, scroll position gets reset
+- [x] **Backspace scroll glitch at end of document** - Fixed! Scroll position now preserved during page reduction
+  
+  **Solution Implemented**:
+  - Save scroll offset from bottom when deletion is detected
+  - Block automatic `scrollIntoView` during deletion operations
+  - Restore scroll position after page count reduction based on saved offset
+  - Clean up protection flags after successful restoration
   
   **Investigation Summary**:
   - **Scenario**: Go to end of doc, press Enter to create new page, then press Backspace during repagination
@@ -22,18 +28,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
   4. ✗ Setting overflow:hidden during pagination - didn't prevent the reset
   5. ✗ Deferring height reduction until after scroll unlock - complex interaction with scrollIntoView
   6. ✗ Viewport-based detection (top 5 lines) - detection worked but prevention failed
-  
-  **Key Insights**:
-  - The scroll reset happens because max scrollable area shrinks when height reduces
-  - TipTap's `scrollIntoView` is called in multiple places during repagination
-  - The issue is specific to cursor position in viewport (lines 1-5) not document position
-  - Interaction between height changes, scroll clamping, and scrollIntoView creates the glitch
-  
-  **Potential Solutions to Explore**:
-  - Completely disable automatic scrollIntoView during backspace operations
-  - Maintain minimum container height during deletions to prevent scroll clamping
-  - Custom scroll management that bypasses browser's automatic adjustments
-  - Investigate if ProseMirror decorations are triggering unexpected reflows
+  7. ✓ **Save offset from bottom + block scrollIntoView** - Successful approach!
 
 ### Memory Leaks & Stability
 - [x] **Add destroyed flag** - Prevent async operations after extension destroy
@@ -151,6 +146,7 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 - [x] **requestIdleCallback optimization** - Use requestIdleCallback instead of setTimeout for better async timing
 - [x] **Typed plugin key** - Added explicit DecorationSet generic type to PluginKey for better TypeScript safety
 - [x] **Named constants** - Replaced magic numbers in layout calculations with descriptive named constants
+- [x] **Backspace scroll glitch fix** - Implemented scroll position preservation during page reduction using offset-from-bottom tracking
 
 ## Notes
 

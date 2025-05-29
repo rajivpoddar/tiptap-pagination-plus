@@ -85,6 +85,10 @@ export const PaginationPlus = Extension.create({
             pluginInstanceId: null,
             // Store editor reference for plugin access
             editor: null,
+            // Scroll position preservation for backspace deletions
+            offsetFromBottom: undefined,
+            blockScrollIntoView: false,
+            savedPageCountBeforeDeletion: undefined,
         };
     },
     onCreate() {
@@ -575,6 +579,15 @@ export const PaginationPlus = Extension.create({
                                     this.storage.correctPageCount = pageCount;
                                     // Clear the unstable update flag after use
                                     this.storage.allowUnstableUpdate = false;
+                                    // If page count decreased due to deletion, clear scroll protection after update
+                                    if (pageCount < oldPageCount && this.storage.blockScrollIntoView) {
+                                        // Delay clearing the block to ensure all scroll operations are complete
+                                        requestAnimationFrame(() => {
+                                            requestAnimationFrame(() => {
+                                                this.storage.blockScrollIntoView = false;
+                                            });
+                                        });
+                                    }
                                     // Update locked range for new page count
                                     const tolerance = contentPerPage * 0.5;
                                     this.storage.lockedHeightRange = {
@@ -607,6 +620,15 @@ export const PaginationPlus = Extension.create({
                                 if (this.storage.allowUnstableUpdate) {
                                     this.storage.allowUnstableUpdate = false;
                                 }
+                                // If we had scroll protection active but page count didn't change, clear it
+                                if (this.storage.blockScrollIntoView && this.storage.offsetFromBottom !== undefined) {
+                                    // Clean up scroll protection if no page change occurred
+                                    delete this.storage.offsetFromBottom;
+                                    delete this.storage.savedPageCountBeforeDeletion;
+                                    requestAnimationFrame(() => {
+                                        this.storage.blockScrollIntoView = false;
+                                    });
+                                }
                             }
                         }
                     }
@@ -616,6 +638,22 @@ export const PaginationPlus = Extension.create({
                 const paginatedHeight = calculatePaginatedHeight(finalPageCount);
                 // Apply calculated height
                 targetNode.style.height = `${paginatedHeight}px`;
+                // Restore scroll position for backspace deletions to prevent glitch
+                if (this.storage.offsetFromBottom !== undefined) {
+                    // Only restore if the page count actually changed
+                    const pageCountChanged = this.storage.savedPageCountBeforeDeletion !== undefined &&
+                        finalPageCount !== this.storage.savedPageCountBeforeDeletion;
+                    if (pageCountChanged) {
+                        // Page count decreased - restore the distance from bottom
+                        const newScrollTop = targetNode.scrollHeight - targetNode.clientHeight - this.storage.offsetFromBottom;
+                        // Ensure the scroll position is valid
+                        const maxScrollTop = targetNode.scrollHeight - targetNode.clientHeight;
+                        targetNode.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+                    }
+                    // Clean up
+                    delete this.storage.offsetFromBottom;
+                    delete this.storage.savedPageCountBeforeDeletion;
+                }
                 // Check for content overflow after setting height and trigger auto-fix
                 requestAnimationFrame(() => {
                     // Check if cancelled
@@ -688,7 +726,9 @@ export const PaginationPlus = Extension.create({
                     // For large paste or new page creation, use TipTap's scrollIntoView
                     requestAnimationFrame(() => {
                         try {
-                            this.editor.commands.scrollIntoView();
+                            if (!this.storage.blockScrollIntoView) {
+                                this.editor.commands.scrollIntoView();
+                            }
                         }
                         catch (e) {
                             // Fallback to restoring saved scroll position
@@ -707,7 +747,9 @@ export const PaginationPlus = Extension.create({
                         // If we were typing recently, ensure cursor stays visible
                         requestAnimationFrame(() => {
                             try {
-                                this.editor.commands.scrollIntoView();
+                                if (!this.storage.blockScrollIntoView) {
+                                    this.editor.commands.scrollIntoView();
+                                }
                             }
                             catch (e) {
                                 // Ignore scroll errors
@@ -735,6 +777,10 @@ export const PaginationPlus = Extension.create({
                 }
                 // Reset flags
                 this.storage.positionSaved = false;
+                // Only reset blockScrollIntoView if we're not in the middle of handling a deletion
+                if (this.storage.offsetFromBottom === undefined) {
+                    this.storage.blockScrollIntoView = false;
+                }
                 if (callback) {
                     callback();
                 }
@@ -904,12 +950,24 @@ export const PaginationPlus = Extension.create({
                             const isTypingOrDeleting = Math.abs(sizeDiff) <= 2 && !isUndoRedo;
                             if (isTypingOrDeleting) {
                                 extensionStorage.lastTypingTime = Date.now();
+                                // For deletions that might cause page shrinkage, save scroll position
+                                if (sizeDiff < 0) {
+                                    const node = extensionStorage.editor.view.dom;
+                                    // Only save if we haven't already saved for this deletion cycle
+                                    if (extensionStorage.offsetFromBottom === undefined) {
+                                        const offset = node.scrollHeight - node.clientHeight - node.scrollTop;
+                                        extensionStorage.offsetFromBottom = offset;
+                                        extensionStorage.blockScrollIntoView = true;
+                                        // Also save the current page count to detect if it actually changes
+                                        extensionStorage.savedPageCountBeforeDeletion = extensionStorage.correctPageCount;
+                                    }
+                                }
                                 // Simple fix: Use TipTap's scrollIntoView command for both typing and deletion
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
                                         try {
                                             const editor = extensionStorage.editor;
-                                            if (!editor) {
+                                            if (!editor || extensionStorage.blockScrollIntoView) {
                                                 return;
                                             }
                                             editor.commands.scrollIntoView();
