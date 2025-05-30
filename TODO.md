@@ -4,6 +4,33 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
 
 ## 🔴 High Priority - Bug Fixes (Do Soon)
 
+### Page Deletion on Content Removal
+- [ ] **Page deletion when content is removed** - Pages not being removed when content is deleted
+  
+  **Investigation Summary**:
+  - **Scenario**: Type content to fill multiple pages, then delete content expecting last page to be removed
+  - **Root Cause**: Height measurement interference from pagination DOM structure
+    1. Pagination elements (invisible `.page` blocks) have large margin-top values
+    2. These margins contribute to scrollHeight even when pagination is hidden
+    3. Binary search calculates 5 pages needed for 4630px height (should be 4)
+    4. Natural content is ~3000px but container reports 4630px due to invisible margins
+  
+  **Attempted Solutions**:
+  1. ✗ Binary search approach (`estimatePages`) - Still measured 5 pages needed
+  2. ✗ Hiding pagination elements with `display: none` - Only reduced height by 2px
+  3. ✗ Direct content measurement with margins - Underestimated at ~3000px
+  4. ✗ Trusting naturalHeight directly - Still calculated 5 pages needed
+  5. ✗ Keydown/keyup handlers with scroll adjustment - Scroll fix worked but page not removed
+  
+  **Patch Files Created**:
+  - `glitch-fix-no-del.patch` - Working scroll glitch fix without page deletion
+  - `glitch-fix-del-attempt.patch` - Failed attempt at page deletion with binary search
+  
+  **Next Steps**:
+  - Need fresh approach to accurately measure content height without pagination interference
+  - Consider alternative detection methods (e.g., tracking content changes directly)
+  - May need to temporarily remove all pagination DOM to get true content height
+
 ### Empty Document Pagination
 - [x] **Empty document loses pagination** - Fixed! Document always maintains at least one page
   
@@ -50,6 +77,38 @@ Based on comprehensive code review feedback, prioritized by impact and effort.
   5. ✗ Deferring height reduction until after scroll unlock - complex interaction with scrollIntoView
   6. ✗ Viewport-based detection (top 5 lines) - detection worked but prevention failed
   7. ✓ **Save offset from bottom + block scrollIntoView** - Successful approach!
+  8. ✓ **Direct height increment/decrement** - Alternative approach that also works!
+     - Detect Enter/Backspace at end of document in keydown handler
+     - Directly adjust container height without remeasuring
+     - Works for both Enter (increment) and Backspace (decrement)
+     - **Trade-off**: Introduces page deletion issue - pages don't get removed when content is deleted
+
+### Page Deletion on Content Removal
+- [ ] **Page deletion when content is removed** - Pages not being removed when content is deleted
+  
+  **Investigation Summary**:
+  - **Scenario**: Type content to fill multiple pages, then delete content expecting last page to be removed
+  - **Root Cause**: Height measurement interference from pagination DOM structure
+    1. Pagination elements (invisible `.page` blocks) have large margin-top values
+    2. These margins contribute to scrollHeight even when pagination is hidden
+    3. Binary search calculates 5 pages needed for 4630px height (should be 4)
+    4. Natural content is ~3000px but container reports 4630px due to invisible margins
+  
+  **Attempted Solutions**:
+  1. ✗ Binary search approach (`estimatePages`) - Still measured 5 pages needed
+  2. ✗ Hiding pagination elements with `display: none` - Only reduced height by 2px
+  3. ✗ Direct content measurement with margins - Underestimated at ~3000px
+  4. ✗ Trusting naturalHeight directly - Still calculated 5 pages needed
+  5. ✗ Keydown/keyup handlers with scroll adjustment - Scroll fix worked but page not removed
+  
+  **Patch Files Created**:
+  - `glitch-fix-no-del.patch` - Working scroll glitch fix without page deletion
+  - `glitch-fix-del-attempt.patch` - Failed attempt at page deletion with binary search
+  
+  **Next Steps**:
+  - Need fresh approach to accurately measure content height without pagination interference
+  - Consider alternative detection methods (e.g., tracking content changes directly)
+  - May need to temporarily remove all pagination DOM to get true content height
 
 ### Memory Leaks & Stability
 - [x] **Add destroyed flag** - Prevent async operations after extension destroy

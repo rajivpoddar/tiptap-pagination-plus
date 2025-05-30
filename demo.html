@@ -152,6 +152,14 @@
                             setTimeout(() => {
                                 document.getElementById('loader').classList.add('hidden');
                                 document.getElementById('editor').classList.remove('hidden');
+                                
+                                // Also try to focus when pagination is ready
+                                setTimeout(() => {
+                                    if (!document.activeElement || !document.activeElement.classList.contains('ProseMirror')) {
+                                        editor.commands.focus('start');
+                                        console.log('🎯 Editor focused from PaginationPlus onReady');
+                                    }
+                                }, 100);
                             }, 500); // Small delay to ensure everything is fully loaded
                         }
                     })
@@ -230,12 +238,24 @@
                     <p></p>
                     
                     <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem. Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam.</p>
+                    
+                    <p></p>
                 `,
                 onReady: () => {
                     console.log('✅ Editor ready with actual PaginationPlus extension!');
                     console.log('Editor DOM element:', editor.view.dom);
                     console.log('Editor classes:', editor.view.dom.className);
                     console.log('Editor storage:', editor.storage);
+                    
+                    // Set cursor to the start of the document
+                    editor.commands.setTextSelection(0);
+                    editor.commands.scrollIntoView();
+                    
+                    // Focus with a slight delay to ensure DOM is ready
+                    setTimeout(() => {
+                        editor.commands.focus('start');
+                        console.log('🎯 Editor focused');
+                    }, 100);
                     
                     // Hide loader and show editor (fallback in case PaginationPlus onReady doesn't fire)
                     setTimeout(() => {
