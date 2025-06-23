@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Dynamic Page Break Heights</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        #editor {
+            background-color: white;
+            border: 1px solid #ddd;
+            min-height: 600px;
+            margin: 20px auto;
+            max-width: 800px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        button {
+            margin: 0 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="text-align: center;">Dynamic Page Break Height Test</h1>
+    
+    <div class="controls">
+        <button onclick="addPageBreak()">Add Page Break</button>
+        <button onclick="addContent()">Add Content</button>
+        <button onclick="clearEditor()">Clear</button>
+    </div>
+    
+    <div id="editor"></div>
+    
+    <div class="info">
+        <p>Click "Add Page Break" to insert a manual page break that will dynamically adjust its height.</p>
+        <p>The red dashed border shows the page break boundaries.</p>
+    </div>
+
+    <script type="module">
+        import { Editor } from 'https://unpkg.com/@tiptap/core@2.1.13/dist/index.js';
+        import { StarterKit } from 'https://unpkg.com/@tiptap/starter-kit@2.1.13/dist/index.js';
+        import { PaginationPlus, PageBreak } from './dist/index.js';
+
+        // Make editor global for button access
+        window.editor = new Editor({
+            element: document.querySelector('#editor'),
+            extensions: [
+                StarterKit,
+                PaginationPlus.configure({
+                    pageHeight: 800,
+                    pageGap: 50,
+                    pageHeaderHeight: 30,
+                    footerText: "Page",
+                    headerText: "Dynamic Page Break Test",
+                    contentPadding: { top: 48, right: 96, bottom: 48, left: 96 },
+                    fontSize: 16,
+                    lineHeight: 1.5,
+                }),
+                PageBreak,
+            ],
+            content: `
+                <h2>Dynamic Page Break Height Demo</h2>
+                <p>This demo shows how page breaks dynamically calculate their height to push content to the next page.</p>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+                <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
+                <p>Add more content and page breaks to see the dynamic height calculation in action!</p>
+            `,
+        });
+
+        // Button functions
+        window.addPageBreak = function() {
+            editor.chain().focus().setPageBreak().run();
+        };
+
+        window.addContent = function() {
+            editor.chain().focus().insertContent(`
+                <p>Additional paragraph of content. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+                <p>Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+            `).run();
+        };
+
+        window.clearEditor = function() {
+            editor.commands.clearContent();
+        };
+    </script>
+</body>
+</html>

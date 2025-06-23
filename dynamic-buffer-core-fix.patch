@@ -1,0 +1,43 @@
+diff --git a/src/PaginationPlus.ts b/src/PaginationPlus.ts
+index 20cd9b2..7f7ef8a 100644
+--- a/src/PaginationPlus.ts
++++ b/src/PaginationPlus.ts
+@@ -690,13 +690,37 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         
+         // Calculate page count with buffer for conservative page removal
+         const lineHeight = 24; // Approximate line height
+-        const buffer = lineHeight * 5; // 5 lines buffer
++        
++        // Dynamic buffer based on current page count
++        // The more pages, the more cumulative error in height calculation
++        // Use a more conservative formula to avoid requiring multiple backspaces
++        const currentPages = this.storage.correctPageCount;
++        // Logarithmic growth with adjustment for higher page counts
++        let bufferLines: number;
++        if (currentPages <= 6) {
++          // For pages 1-6, use the logarithmic formula
++          bufferLines = Math.ceil(2 + Math.log2(currentPages));
++        } else {
++          // For pages 7+, use a slightly more generous buffer to prevent layout breaks
++          bufferLines = Math.ceil(3 + Math.log2(currentPages));
++        }
++        const buffer = lineHeight * bufferLines;
+         const adjustedHeightWithBuffer = adjustedHeight + buffer;
+         const pageCountWithBuffer = Math.max(1, Math.ceil(adjustedHeightWithBuffer / contentPerPage));
+         
+         // Store the calculated page count with buffer for the keyup handler
+         this.storage.lastCalculatedPageCount = pageCountWithBuffer;
+         
++        console.log('[PaginationPlus] Measurement timing:', 
++          `naturalHeight: ${naturalHeight}, ` +
++          `adjustedHeight: ${adjustedHeight}, ` +
++          `contentPerPage: ${contentPerPage}, ` +
++          `actualPageCount: ${pageCount}, ` +
++          `bufferedPageCount: ${pageCountWithBuffer}, ` +
++          `buffer: ${buffer / lineHeight} lines, ` +
++          `currentPages: ${this.storage.correctPageCount}, ` +
++          `timeSinceLastDeletion: ${this.storage.lastDeletionTime ? Date.now() - this.storage.lastDeletionTime : 'never'}`);
++        
+         // If we're in a deletion scenario and would reduce pages, be very conservative
+         if (this.storage.lastDeletionTime && Date.now() - this.storage.lastDeletionTime < 1000) {
+           const currentStoredPages = this.storage.correctPageCount;

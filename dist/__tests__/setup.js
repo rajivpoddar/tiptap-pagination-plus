@@ -7,3 +7,18 @@ Object.defineProperty(window, 'getComputedStyle', {
 });
 // Mock requestAnimationFrame
 global.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+// Mock ResizeObserver
+global.ResizeObserver = class ResizeObserver {
+    constructor(callback) {
+        this.callback = callback;
+    }
+    observe() {
+        // Mock implementation
+    }
+    unobserve() {
+        // Mock implementation
+    }
+    disconnect() {
+        // Mock implementation
+    }
+};

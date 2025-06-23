@@ -134,6 +134,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       savedPageCountBeforeDeletion: undefined as number | undefined,
       // Cursor position in viewport for typing scenarios
       cursorViewportOffset: undefined as number | undefined,
+      // Dynamic page break height calculation
+      isUpdatingPageBreaks: false,
+      updatePageBreakHeights: (() => {}) as () => Promise<void>,
     };
   },
 
@@ -280,6 +283,20 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           width: 100% !important;
         }
       }
+      
+      /* Manual page break styles - creates a spacer that pushes content to next page */
+      .rm-with-pagination .page-break-node {
+        display: block;
+        width: 100%;
+        min-height: 20px;
+        background: transparent;
+        border: none;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+        /* Dynamic height will be set via CSS variable */
+        height: var(--page-break-height, 200px);
+      }
     `;
     document.head.appendChild(style);
 
@@ -332,9 +349,308 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
       // If we have significant height (more than 1.5 pages worth), trust the height calculation
       const significantHeight = adjustedHeight > contentPerPage * 1.5;
 
+      // Check for manual page breaks in the document
+      const pageBreakNodes = this.editor.state.doc.content.content.filter(
+        (node: any) => node.type.name === 'pageBreak'
+      );
+      const manualPageBreaks = pageBreakNodes.length;
+
+      // If we have manual page breaks, ensure we have at least that many pages + 1
+      if (manualPageBreaks > 0) {
+        const calculatedPages = hasActualContent || significantHeight
+          ? Math.max(1, Math.ceil(adjustedHeight / contentPerPage))
+          : 1;
+        return Math.max(calculatedPages, manualPageBreaks + 1);
+      }
+
       return hasActualContent || significantHeight
         ? Math.max(1, Math.ceil(adjustedHeight / contentPerPage))
         : 1;
+    };
+    
+    // Analyze page breaks in the document and return their positions
+    const analyzePageBreaks = (): Array<{ pos: number; node: any }> => {
+      const pageBreaks: Array<{ pos: number; node: any }> = [];
+      let pos = 0;
+      
+      this.editor.state.doc.descendants((node, nodePos) => {
+        if (node.type.name === 'pageBreak') {
+          pageBreaks.push({ pos: nodePos, node });
+        }
+      });
+      
+      return pageBreaks;
+    };
+    
+    // Update page break heights dynamically
+    const updatePageBreakHeights = async () => {
+      // Prevent recursive calls
+      if (this.storage.isUpdatingPageBreaks) {
+        return;
+      }
+      
+      this.storage.isUpdatingPageBreaks = true;
+      
+      try {
+        // Wait for DOM to stabilize
+        await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
+        
+        // Find all page break elements in the DOM
+        let pageBreakElements = targetNode.querySelectorAll('.page-break-node');
+        
+        // Also check for other selectors the PageBreak might use
+        const altPageBreakElements = targetNode.querySelectorAll('[data-page-break="true"], .tiptap-page-break, div[data-page-break]');
+        
+        if (pageBreakElements.length === 0 && altPageBreakElements.length > 0) {
+          // Use the alternative selector results
+          pageBreakElements = altPageBreakElements;
+        }
+        
+        if (pageBreakElements.length === 0) {
+          return;
+        }
+        
+        const pageHeight = this.options.pageHeight;
+        const headerHeight = this.options.pageHeaderHeight;
+        const contentHeight = pageHeight - headerHeight * 2;
+        const lineHeight = this.options.fontSize * this.options.lineHeight;
+        
+        // Process each page break sequentially to ensure previous heights are applied
+        for (let index = 0; index < pageBreakElements.length; index++) {
+          const element = pageBreakElements[index];
+          const pageBreakEl = element as HTMLElement;
+          
+          // Get the position of this page break in the document
+          const rect = pageBreakEl.getBoundingClientRect();
+          const containerRect = targetNode.getBoundingClientRect();
+          const relativeTop = rect.top - containerRect.top + targetNode.scrollTop;
+          
+          // Calculate which page this element is on
+          const currentPage = Math.floor(relativeTop / pageHeight);
+          const pageStartY = currentPage * pageHeight + headerHeight;
+          const pageEndY = pageStartY + contentHeight;
+          
+          // Calculate how much space is left on the current page
+          const spaceUsedOnPage = relativeTop - pageStartY;
+          const spaceLeftOnPage = pageEndY - relativeTop;
+          
+          
+          // The page break should fill the entire remaining space on the current page
+          // to push ALL following content to the next page
+          // We need to account for the fact that the page break itself takes some space
+          // and that content after it needs to start cleanly on the next page
+          
+          // Start with the space left on the page
+          let requiredHeight = spaceLeftOnPage;
+          
+          // We need to ensure the page break fills exactly to the page boundary
+          // No buffer needed here - we want to fill exactly to the end
+          requiredHeight = spaceLeftOnPage;
+          
+          // Round to nearest line height for cleaner breaks
+          let lines = Math.ceil(requiredHeight / lineHeight);
+          let testHeight = lines * lineHeight;
+          
+          
+          // Use mathematical approach to calculate exact height needed
+          
+          // Find the next content element after this page break
+          let nextElement = pageBreakEl.nextElementSibling;
+          while (nextElement && (nextElement.classList.contains('page-break-node') || 
+                                nextElement.classList.contains('rm-page-break') ||
+                                (nextElement as HTMLElement).dataset?.rmPagination)) {
+            nextElement = nextElement.nextElementSibling;
+          }
+          
+          if (nextElement) {
+            // Get initial position of next content
+            const initialNextRect = nextElement.getBoundingClientRect();
+            const initialNextTop = initialNextRect.top - containerRect.top + targetNode.scrollTop;
+            const targetPage = currentPage + 1;
+            const targetPageStartY = targetPage * pageHeight + headerHeight;
+            
+            
+            // Use O(1) mathematical calculation instead of iterative approach
+            // Step 1: Set page break to minimum height to remove previous influence
+            pageBreakEl.style.setProperty('--page-break-height', '1px');
+            
+            // Force layout recalculation to get clean measurements
+            void pageBreakEl.offsetHeight;
+            void targetNode.offsetHeight;
+            
+            // Step 2: Measure where the next content currently sits
+            const nextRect = nextElement.getBoundingClientRect();
+            const nextTop = nextRect.top - containerRect.top + targetNode.scrollTop;
+            
+            // Calculate target page start (reuse from above)
+            // const targetPageStartY = targetPage * pageHeight + headerHeight; // Already calculated above
+            
+            // Step 3: Use visual approach to find target page position
+            // Build ordered array of actual page starts from rendered headers
+            const pageHeaders = Array.from(targetNode.querySelectorAll('.rm-page-header'));
+            const pageTops = pageHeaders
+              .map(header => {
+                const rect = header.getBoundingClientRect();
+                return rect.top - containerRect.top + targetNode.scrollTop;
+              })
+              .sort((a, b) => a - b); // 0-based page order
+            
+            
+            // Find which page the next content element currently lands on
+            let currentContentPageIndex = 0;
+            while (currentContentPageIndex + 1 < pageTops.length &&
+                   nextTop >= pageTops[currentContentPageIndex + 1]) {
+              currentContentPageIndex++;
+            }
+            
+            // The target page is the next page after where content currently sits
+            const targetPageIndex = currentContentPageIndex + 1;
+            
+            // Calculate actual target page start position
+            let actualTargetPageStart;
+            if (targetPageIndex < pageTops.length) {
+              // We have the target page header - use its actual position
+              actualTargetPageStart = pageTops[targetPageIndex] + headerHeight;
+            } else {
+              // Target page doesn't exist yet - this shouldn't happen in normal operation
+              // Fall back to mathematical calculation
+              actualTargetPageStart = targetPage * pageHeight + headerHeight;
+            }
+            
+            
+            const currentOffsetWithinPage = nextTop - (currentPage * pageHeight + headerHeight);
+            const deltaNeeded = actualTargetPageStart - nextTop;
+            
+            
+            let finalHeight;
+            if (deltaNeeded <= 0) {
+              // Content is already on or past the target page
+              // Use minimum height to maintain the page break node
+              finalHeight = lineHeight;
+            } else {
+              // Calculate exact height needed - deltaNeeded is the direct distance
+              // No need to add spaceLeftOnPage as deltaNeeded already accounts for it
+              const exactHeight = deltaNeeded;
+              const linesNeeded = Math.ceil(exactHeight / lineHeight);
+              finalHeight = linesNeeded * lineHeight;
+              
+            }
+            
+            // Step 4: Set the calculated height
+            pageBreakEl.style.setProperty('--page-break-height', `${finalHeight}px`);
+            
+            // Step 5: Verify using visual approach - is content at start of target page?
+            void pageBreakEl.offsetHeight;
+            void targetNode.offsetHeight;
+            
+            const verifyRect = nextElement.getBoundingClientRect();
+            const verifyTop = verifyRect.top - containerRect.top + targetNode.scrollTop;
+            
+            // Re-scan page headers after height change
+            const verifyPageHeaders = Array.from(targetNode.querySelectorAll('.rm-page-header'));
+            const verifyPageTops = verifyPageHeaders
+              .map(header => {
+                const rect = header.getBoundingClientRect();
+                return rect.top - containerRect.top + targetNode.scrollTop;
+              })
+              .sort((a, b) => a - b);
+            
+            // Find which page the content actually landed on
+            let actualPageIndex = 0;
+            while (actualPageIndex + 1 < verifyPageTops.length &&
+                   verifyTop >= verifyPageTops[actualPageIndex + 1]) {
+              actualPageIndex++;
+            }
+            
+            // Calculate the ideal start position for this page
+            const actualPageStart = verifyPageTops[actualPageIndex] + headerHeight;
+            const offsetFromPageStart = verifyTop - actualPageStart;
+            const tolerancePx = lineHeight; // 1 line height tolerance
+            const atStartOfPage = Math.abs(offsetFromPageStart) <= tolerancePx;
+            const verifyOffsetWithinPage = offsetFromPageStart; // For binary search compatibility
+            
+            
+            // Step 6: Optional binary search refinement for precision
+            if (!atStartOfPage || actualPageIndex !== targetPageIndex) {
+              
+              let minHeight = Math.max(lineHeight, finalHeight - lineHeight);
+              let maxHeight = finalHeight + lineHeight;
+              let bestHeight = finalHeight;
+              let bestDistance = Math.abs(offsetFromPageStart);
+              let bestPageCorrect = actualPageIndex === targetPageIndex;
+              
+              for (let binaryIter = 0; binaryIter < 4; binaryIter++) {
+                const midHeight = Math.round((minHeight + maxHeight) / 2);
+                pageBreakEl.style.setProperty('--page-break-height', `${midHeight}px`);
+                
+                void pageBreakEl.offsetHeight;
+                void targetNode.offsetHeight;
+                
+                const testRect = nextElement.getBoundingClientRect();
+                const testTop = testRect.top - containerRect.top + targetNode.scrollTop;
+                
+                // Re-scan page headers after height change
+                const testPageHeaders = Array.from(targetNode.querySelectorAll('.rm-page-header'));
+                const testPageTops = testPageHeaders
+                  .map(header => {
+                    const rect = header.getBoundingClientRect();
+                    return rect.top - containerRect.top + targetNode.scrollTop;
+                  })
+                  .sort((a, b) => a - b);
+                
+                // Find which page content landed on
+                let testPageIndex = 0;
+                while (testPageIndex + 1 < testPageTops.length &&
+                       testTop >= testPageTops[testPageIndex + 1]) {
+                  testPageIndex++;
+                }
+                
+                const testPageStart = testPageTops[testPageIndex] + headerHeight;
+                const testOffset = testTop - testPageStart;
+                const distance = Math.abs(testOffset);
+                const pageCorrect = testPageIndex === targetPageIndex;
+                
+                // Prefer solutions that get the page right, then optimize for distance
+                if (pageCorrect && !bestPageCorrect) {
+                  bestHeight = midHeight;
+                  bestDistance = distance;
+                  bestPageCorrect = true;
+                } else if (pageCorrect === bestPageCorrect && distance < bestDistance) {
+                  bestHeight = midHeight;
+                  bestDistance = distance;
+                }
+                
+                if (testOffset > 0) {
+                  // Content is below target, need more height
+                  minHeight = midHeight;
+                } else {
+                  // Content is above target, need less height
+                  maxHeight = midHeight;
+                }
+                
+                
+                // Early exit if we're close enough and on the right page
+                if (pageCorrect && distance <= tolerancePx) break;
+              }
+              
+              finalHeight = bestHeight;
+              pageBreakEl.style.setProperty('--page-break-height', `${finalHeight}px`);
+            }
+            
+          } else {
+            // No next element - just fill the remaining space on current page
+            const fallbackHeight = Math.ceil(spaceLeftOnPage / lineHeight) * lineHeight;
+            pageBreakEl.style.setProperty('--page-break-height', `${fallbackHeight}px`);
+          }
+          
+          // Force layout recalculation after setting final height
+          // This ensures the next page break sees the correct positions
+          void targetNode.offsetHeight;
+          await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
+        }
+      } finally {
+        this.storage.isUpdatingPageBreaks = false;
+      }
     };
 
     // Helper functions for detecting when content is ready
@@ -716,6 +1032,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           this.editor.view.dispatch(
             this.editor.view.state.tr.setMeta(pagination_meta_key, true)
           );
+          
+          // Update page break heights after initial setup
+          requestAnimationFrame(() => {
+            updatePageBreakHeights();
+          });
         } else if (!this.storage.isInitialMeasurement) {
           // Only update page count after initial setup is complete
           const timeSinceSetup = this.storage.initialSetupCompleteTime
@@ -773,6 +1094,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   this.editor.view.dispatch(
                     this.editor.view.state.tr.setMeta(pagination_meta_key, true)
                   );
+                  
+                  // Update page break heights after decoration update
+                  requestAnimationFrame(() => {
+                    updatePageBreakHeights();
+                  });
                   
                   // If page count increased, ensure cursor is visible
                   if (pageCount > oldPageCount) {
@@ -902,6 +1228,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             this.editor.view.dispatch(
               this.editor.view.state.tr.setMeta(pagination_meta_key, true)
             );
+            
+            // Update page break heights after auto-fix
+            requestAnimationFrame(() => {
+              updatePageBreakHeights();
+            });
 
             // Check once more after the fix to ensure it worked
             requestAnimationFrame(() => {
@@ -929,6 +1260,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                 this.editor.view.dispatch(
                   this.editor.view.state.tr.setMeta(pagination_meta_key, true)
                 );
+                
+                // Update page break heights after final fix
+                requestAnimationFrame(() => {
+                  updatePageBreakHeights();
+                });
               }
             });
           }
@@ -1071,6 +1407,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
 
     // Store remeasure function for use in plugins
     this.storage.remeasureContent = remeasureContent;
+    
+    // Store updatePageBreakHeights function for use in plugins
+    this.storage.updatePageBreakHeights = updatePageBreakHeights;
 
     // Add event listener for forced refresh
     const paginationRefreshHandler = (e: Event) => {
@@ -1332,6 +1671,16 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   const delay = sizeDiff < 0 ? 100 : 300; // Faster for deletions
                   // Handle normal content changes after initialization
                   extensionStorage.remeasureContent(delay);
+                  
+                  // Check if page breaks exist and schedule height update
+                  requestAnimationFrame(() => {
+                    const hasPageBreaks = newState.doc.content.content.some(
+                      (node: any) => node.type.name === 'pageBreak'
+                    );
+                    if (hasPageBreaks) {
+                      extensionStorage.updatePageBreakHeights();
+                    }
+                  });
                 }
               }
             }
