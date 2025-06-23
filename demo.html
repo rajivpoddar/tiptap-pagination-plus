@@ -45,13 +45,31 @@
             border-bottom: 1px solid #f59e0b;
             color: #92400e;
             font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .instructions button {
+            background: #f59e0b;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .instructions button:hover {
+            background: #d97706;
         }
         
         .editor-container {
             padding: 20px;
             display: flex;
             justify-content: center;
-            min-height: calc(100vh - 150px);
+            min-height: calc(100vh - 180px);
         }
         
         .editor {
@@ -103,6 +121,14 @@
 </head>
 <body>
     <div class="container">
+        <div class="header">
+            <h1>TipTap Pagination Plus - ES6 Demo</h1>
+            <p>Test manual page breaks with Ctrl+Enter or the button below</p>
+        </div>
+        <div class="instructions">
+            <button id="insertPageBreak">Insert Page Break</button>
+            <span>Use Ctrl+Enter (Cmd+Enter on Mac) to insert a page break at cursor position</span>
+        </div>
         <div class="editor-container">
             <div id="loader" class="loader-container">
                 <div class="loader"></div>
@@ -128,17 +154,20 @@
             const { Editor } = await import('@tiptap/core');
             const { default: StarterKit } = await import('@tiptap/starter-kit');
             
-            // Import our local pagination extension
+            // Import our local pagination extensions directly
             const { PaginationPlus } = await import('./dist/PaginationPlus.js');
+            const { PageBreak } = await import('./dist/PageBreak.js');
             
             console.log('✅ All modules loaded successfully');
             console.log('PaginationPlus:', PaginationPlus);
+            console.log('PageBreak:', PageBreak);
 
             // Create the editor
             const editor = new Editor({
                 element: document.querySelector('#editor'),
                 extensions: [
                     StarterKit,
+                    PageBreak,
                     PaginationPlus.configure({
                         pageHeight: 842, // 11 inches at 72 DPI (more realistic)
                         pageGap: 20,
@@ -295,6 +324,11 @@
 
             // Make editor available for debugging
             window.editor = editor;
+            
+            // Add click handler for page break button
+            document.getElementById('insertPageBreak').addEventListener('click', () => {
+                editor.chain().focus().insertPageBreak().run();
+            });
             
         } catch (error) {
             console.error('❌ Failed to load modules:', error);

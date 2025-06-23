@@ -8,8 +8,9 @@
     "test": "jest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "build": "tsc",
-    "watch": "tsc-watch --onSuccess \"npm run build\""
+    "build": "tsc && node scripts/fix-imports.js",
+    "fix-imports": "node scripts/fix-imports.js",
+    "watch": "tsc-watch --onSuccess \"npm run fix-imports\""
   },
   "keywords": [
     "tiptap",
