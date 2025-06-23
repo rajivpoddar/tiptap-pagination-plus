@@ -37,7 +37,7 @@ export const PageBreak = Node.create({
       class: 'page-break-node tiptap-page-break',
       contenteditable: 'false',
       ...HTMLAttributes 
-    }, 0];
+    }];
   },
 
   addCommands() {

@@ -13,7 +13,7 @@ export const PageBreak = Node.create({
         ];
     },
     renderHTML({ HTMLAttributes }) {
-        return ['div', Object.assign({ 'data-page-break': 'true', 'data-page-break-force': 'true', class: 'page-break-node tiptap-page-break', contenteditable: 'false' }, HTMLAttributes), 0];
+        return ['div', Object.assign({ 'data-page-break': 'true', 'data-page-break-force': 'true', class: 'page-break-node tiptap-page-break', contenteditable: 'false' }, HTMLAttributes)];
     },
     addCommands() {
         return {
