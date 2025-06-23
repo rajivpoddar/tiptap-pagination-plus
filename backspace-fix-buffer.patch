@@ -1,0 +1,414 @@
+diff --git a/src/PaginationPlus.ts b/src/PaginationPlus.ts
+index ad85a1d..e16f4ce 100644
+--- a/src/PaginationPlus.ts
++++ b/src/PaginationPlus.ts
+@@ -120,8 +120,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       // Track typing activity to avoid interfering with cursor during active typing
+       lastTypingTime: 0,
+       typingThreshold: 1000, // 1 second of inactivity before allowing cursor restoration
++      // Track deletion time specifically
++      lastDeletionTime: 0,
+       // Extension lifecycle tracking
+       destroyed: false,
++      // Track backspace count for debugging
++      backspaceCount: 0,
+       // Type the remeasureContent function for proper type safety
+       remeasureContent: (() => {}) as (delay?: number) => void,
+       // Store plugin instance ID for cleanup
+@@ -134,6 +138,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       savedPageCountBeforeDeletion: undefined as number | undefined,
+       // Cursor position in viewport for typing scenarios
+       cursorViewportOffset: undefined as number | undefined,
++      // Track the last calculated page count for backspace detection
++      lastCalculatedPageCount: 1,
+     };
+   },
+ 
+@@ -653,6 +659,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         const initialHeight =
+           contentEditablePadding + this.options.pageHeaderHeight * 2; // Header + Footer
+         const adjustedHeight = Math.max(0, naturalHeight - initialHeight);
++        
++        // Store these for use in deletion logic
++        const calcParams = { contentPerPage, adjustedHeight, naturalHeight };
+ 
+         // Check if we have actual content beyond the initial structure
+         const contentElement = targetNode.querySelector(".ProseMirror-content");
+@@ -677,6 +686,38 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         // Use initial calculation for now
+         let pageCount = initialPageCount;
+         
++        // Store the calculated page count with buffer for the keyup handler
++        const lineHeight = 24; // Approximate line height
++        const buffer = lineHeight * 5; // 5 lines buffer
++        const adjustedHeightWithBuffer = adjustedHeight + buffer;
++        const pageCountWithBuffer = Math.max(1, Math.ceil(adjustedHeightWithBuffer / contentPerPage));
++        this.storage.lastCalculatedPageCount = pageCountWithBuffer;
++        
++        // If we're in a deletion scenario and would reduce pages, be very conservative
++        if (this.storage.lastDeletionTime && Date.now() - this.storage.lastDeletionTime < 1000) {
++          const currentStoredPages = this.storage.correctPageCount;
++          if (pageCount < currentStoredPages) {
++            // Add a buffer: only remove page if we have at least 5 lines worth of space
++            // This prevents premature page removal
++            const lineHeight = 24; // Approximate line height
++            const buffer = lineHeight * 5; // 5 lines buffer
++            const adjustedHeightWithBuffer = adjustedHeight + buffer;
++            const pageCountWithBuffer = Math.max(1, Math.ceil(adjustedHeightWithBuffer / contentPerPage));
++            
++            if (pageCountWithBuffer < currentStoredPages) {
++              // Even with buffer, we need fewer pages
++              pageCount = pageCountWithBuffer;
++              console.log(`PAGE_REMOVAL_WITH_BUFFER:calculatedPages=${pageCount}:currentPages=${currentStoredPages}:buffer=${buffer}px`);
++            } else {
++              // With buffer, keep current pages
++              console.log(`PAGE_REMOVAL_DEFERRED:calculatedPages=${pageCount}:currentPages=${currentStoredPages}:pageCountWithBuffer=${pageCountWithBuffer}`);
++              pageCount = currentStoredPages;
++            }
++          }
++        }
++        
++        // Log initial page count calculation
++        console.log(`REPAGINATION_CALC:pageCount=${pageCount}:naturalHeight=${naturalHeight}:hasActualContent=${hasActualContent}`);
+ 
+         // Track stable height measurements
+         if (
+@@ -704,6 +745,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         ) {
+           this.storage.correctPageCount = Math.max(1, pageCount);
+           this.storage.lastMeasuredHeight = naturalHeight;
++          console.log(`REPAGINATION_COMPLETE:oldPageCount=1:newPageCount=${pageCount}:changed=true:initial=true`);
+           // Lock in an acceptable height range (±0.5 page tolerance)
+           // Tighter tolerance to prevent unnecessary page count changes
+           const tolerance = contentPerPage * 0.5; // Allow 0.5 page worth of variation
+@@ -747,7 +789,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                 if (shouldUpdate) {
+                   const oldPageCount = this.storage.correctPageCount;
+                   this.storage.correctPageCount = Math.max(1, pageCount);
+-
++                  console.log(`REPAGINATION_COMPLETE:oldPageCount=${oldPageCount}:newPageCount=${pageCount}:changed=true:initial=false`);
+ 
+                   // Clear the unstable update flag after use
+                   this.storage.allowUnstableUpdate = false;
+@@ -770,6 +812,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                   };
+ 
+                   // Trigger decoration update
++                  console.log(`DECORATION_UPDATE:dispatching:pageCount=${this.storage.correctPageCount}`);
+                   this.editor.view.dispatch(
+                     this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+                   );
+@@ -792,6 +835,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                   }
+                 }
+               } else {
++                console.log(`REPAGINATION_COMPLETE:oldPageCount=${this.storage.correctPageCount}:newPageCount=${pageCount}:changed=false:noHeightChange=false`);
+                 // Clear allowUnstableUpdate flag even if page count didn't change
+                 // This prevents ghost gaps after large deletes that don't change page count
+                 if (this.storage.allowUnstableUpdate) {
+@@ -817,6 +861,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         const paginatedHeight = calculatePaginatedHeight(finalPageCount);
+ 
+         // Apply calculated height
++        console.log(`HEIGHT_UPDATE:finalPageCount=${finalPageCount}:height=${paginatedHeight}px:scrollHeight=${targetNode.scrollHeight}`);
+         targetNode.style.height = `${paginatedHeight}px`;
+         
+         // Restore scroll position for backspace deletions to prevent glitch
+@@ -887,7 +932,20 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+           const containerHeight = paginatedHeight;
+           const overflow = actualScrollHeight - containerHeight;
+ 
++          // Check if we recently deleted content (within last 1000ms)
++          const recentlyDeleted = this.storage.offsetFromBottom !== undefined || 
++                                 (this.storage.lastDeletionTime && Date.now() - this.storage.lastDeletionTime < 1000);
++
++          // Log overflow detection status
+           if (overflow > 0 && !this.storage.isInitialMeasurement) {
++            if (recentlyDeleted) {
++              console.log(`OVERFLOW_CHECK:detected=${overflow}px:skipped=true:reason=recent_deletion`);
++            } else {
++              console.log(`OVERFLOW_CHECK:detected=${overflow}px:skipped=false:processing=true`);
++            }
++          }
++          
++          if (overflow > 0 && !this.storage.isInitialMeasurement && !recentlyDeleted) {
+             // Content overflow detected
+ 
+             // Auto-fix: Add enough pages to contain all content
+@@ -896,7 +954,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+             const newHeight = calculatePaginatedHeight(newPageCount);
+             // Apply corrected height and update storage
+             targetNode.style.height = `${newHeight}px`;
++            const oldOverflowPageCount = this.storage.correctPageCount;
+             this.storage.correctPageCount = Math.max(1, newPageCount);
++            console.log(`REPAGINATION_COMPLETE:oldPageCount=${oldOverflowPageCount}:newPageCount=${newPageCount}:changed=true:overflow=true`);
+ 
+             // Trigger decoration update for new page count
+             this.editor.view.dispatch(
+@@ -1027,6 +1087,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         // Reset flags
+         this.storage.positionSaved = false;
+         
++        // Don't clear skipOverflowCheck flag here - let it persist until typing resumes
++        
+         // Only reset blockScrollIntoView if we're not in the middle of handling a deletion
+         if (this.storage.offsetFromBottom === undefined) {
+           this.storage.blockScrollIntoView = false;
+@@ -1056,6 +1118,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       // Continue with remeasurement even if destroyed flag is set
+       // This handles the case where React/TipTap destroys extensions during active operations
+ 
++
+       if (this.storage.remeasureTimer) {
+         clearTimeout(this.storage.remeasureTimer);
+       }
+@@ -1089,6 +1152,203 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       );
+     });
+ 
++    // Add keyup event handler for backspace phantom page workaround
++    const backspacePhantomPageHandler = (e: KeyboardEvent) => {
++      // Track backspace count and deletion time
++      if (e.key === 'Backspace') {
++        this.storage.backspaceCount++;
++        this.storage.lastDeletionTime = Date.now();
++      }
++      
++      // Calculate current position info
++      const { selection } = this.editor.state;
++      const cursorPos = selection.from;
++      const docSize = this.editor.state.doc.content.size;
++      const isAtEndOfDoc = cursorPos >= docSize - 2; // Allow small margin
++      
++      // More importantly, check if we're at the start of a page
++      let isAtStartOfPage = false;
++      try {
++        const domPos = this.editor.view.domAtPos(cursorPos);
++        if (domPos && domPos.node) {
++          const node = domPos.node.nodeType === Node.TEXT_NODE 
++            ? domPos.node.parentElement 
++            : domPos.node as HTMLElement;
++          
++          if (node) {
++            const rect = node.getBoundingClientRect();
++            const containerRect = targetNode.getBoundingClientRect();
++            const relativeTop = rect.top - containerRect.top;
++            
++            // Calculate position within current page
++            const effectivePageHeight = this.options.pageHeight + this.options.pageGap + 48; // 48px is header margin contribution
++            const positionInPage = relativeTop % effectivePageHeight;
++            
++            // Consider at start of page if within first 2 lines (48px) after header
++            const headerOffset = this.options.pageHeaderHeight;
++            
++            // More detailed logging to understand the position
++            if (e.key === 'Backspace') {
++              const pageNumber = Math.floor(relativeTop / effectivePageHeight) + 1;
++              const pageStartY = (pageNumber - 1) * effectivePageHeight;
++              const distanceFromPageStart = relativeTop - pageStartY;
++              
++              console.log(`PAGE_POSITION_DEBUG:relativeTop=${relativeTop}:effectivePageHeight=${effectivePageHeight}:positionInPage=${positionInPage}:headerOffset=${headerOffset}:pageNumber=${pageNumber}:pageStartY=${pageStartY}:distanceFromPageStart=${distanceFromPageStart}`);
++              
++              // Check if we're within the first few lines of the page
++              // Need to account for different scenarios:
++              // 1. Cursor might be in the page break area (< headerOffset)
++              // 2. Cursor might be right after the header (headerOffset to headerOffset + 48)
++              
++              // More lenient check: consider "at start" if within first 100px of the page
++              // This accounts for page breaks, headers, and first line of content
++              isAtStartOfPage = distanceFromPageStart >= 0 && distanceFromPageStart <= 100;
++              
++              console.log(`PAGE_START_CHECK:isAtStartOfPage=${isAtStartOfPage}:distanceFromPageStart=${distanceFromPageStart}:threshold=100`);
++            }
++          }
++        }
++      } catch (e) {
++        // Ignore errors
++      }
++      
++      // Get page info
++      const domPageBreakers = targetNode.querySelectorAll('.rm-page-break').length;
++      const totalPages = this.storage.correctPageCount;
++      
++      // Calculate current page number
++      let currentPageNum = 1;
++      try {
++        const domPos = this.editor.view.domAtPos(cursorPos);
++        if (domPos && domPos.node) {
++          const node = domPos.node.nodeType === Node.TEXT_NODE 
++            ? domPos.node.parentElement 
++            : domPos.node as HTMLElement;
++          
++          if (node) {
++            const rect = node.getBoundingClientRect();
++            const containerRect = targetNode.getBoundingClientRect();
++            const relativeTop = rect.top - containerRect.top;
++            
++            const effectivePageHeight = this.options.pageHeight + this.options.pageGap + 48; // 48px is header margin contribution
++            currentPageNum = Math.floor(relativeTop / effectivePageHeight) + 1;
++          }
++        }
++      } catch (e) {
++        // Ignore position calculation errors
++      }
++      
++      // Log every keyup event
++      console.log(`KEYUP:${e.key}:backspaceCount=${this.storage.backspaceCount}:isAtEndOfDoc=${isAtEndOfDoc}:isAtStartOfPage=${isAtStartOfPage}:currentPageNum=${currentPageNum}:totalPages=${totalPages}:domPageBreakers=${domPageBreakers}`);
++      
++      if (e.key !== 'Backspace') return;
++      
++      // Check for phantom pages - try different detection methods
++      const hasPhantomPages = totalPages > domPageBreakers + 1 || 
++                             (totalPages > domPageBreakers && domPageBreakers > 0);
++      
++      console.log(`PHANTOM_CHECK:hasPhantomPages=${hasPhantomPages}:totalPages=${totalPages}:domPageBreakers=${domPageBreakers}:actualPages=${domPageBreakers + 1}`);
++      
++      // If we have more stored pages than DOM shows, we have phantom pages
++      if (hasPhantomPages) {
++        // Calculate current page from cursor position
++        const { selection } = this.editor.state;
++        const cursorPos = selection.from;
++        
++        try {
++          // Get DOM position of cursor
++          const domPos = this.editor.view.domAtPos(cursorPos);
++          if (domPos && domPos.node) {
++            const node = domPos.node.nodeType === Node.TEXT_NODE 
++              ? domPos.node.parentElement 
++              : domPos.node as HTMLElement;
++            
++            if (node) {
++              const rect = node.getBoundingClientRect();
++              const containerRect = targetNode.getBoundingClientRect();
++              const relativeTop = rect.top - containerRect.top;
++              
++              // Calculate current page number
++              const effectivePageHeight = this.options.pageHeight + this.options.pageGap + 48; // 48px is header margin contribution
++              const currentPageNum = Math.floor(relativeTop / effectivePageHeight) + 1;
++              
++              // Check if we're at the end of the current page (within last 100px)
++              const pageEndThreshold = 100;
++              const positionInPage = relativeTop % effectivePageHeight;
++              const distanceFromPageEnd = effectivePageHeight - positionInPage - this.options.pageGap - LAYOUT_CONSTANTS.HEADER_MARGIN_CONTRIBUTION;
++              const isAtPageEnd = distanceFromPageEnd <= pageEndThreshold && distanceFromPageEnd >= 0;
++              
++              // If cursor is at end of a page and we have phantom pages
++              if (isAtPageEnd && currentPageNum < totalPages) {
++                console.log(`PHANTOM_FIX_TRIGGERED:currentPageNum=${currentPageNum}:totalPages=${totalPages}:isAtPageEnd=${isAtPageEnd}:distanceFromPageEnd=${distanceFromPageEnd}:correctPageCount=${domPageBreakers + 1}`);
++                
++                // Block the next remeasure to prevent glitching
++                this.storage.blockNextRemeasure = true;
++                
++                // Calculate the correct height
++                const correctPageCount = domPageBreakers + 1; // DOM pages + 1
++                const correctHeight = calculatePaginatedHeight(correctPageCount);
++                
++                console.log(`PHANTOM_HEIGHT_UPDATE:oldHeight=${targetNode.style.height}:newHeight=${correctHeight}px:correctPageCount=${correctPageCount}`);
++                
++                // Directly update the height
++                targetNode.style.height = `${correctHeight}px`;
++                
++                // Update storage to match reality
++                this.storage.correctPageCount = correctPageCount;
++                
++                // Dispatch decoration update to clean up phantom pages
++                this.editor.view.dispatch(
++                  this.editor.view.state.tr.setMeta(pagination_meta_key, true)
++                );
++                
++                // Clear the block flag after a short delay
++                setTimeout(() => {
++                  this.storage.blockNextRemeasure = false;
++                  console.log(`PHANTOM_FIX_COMPLETE:blockNextRemeasure=false`);
++                }, 100);
++              } else {
++                console.log(`PHANTOM_FIX_NOT_TRIGGERED:currentPageNum=${currentPageNum}:totalPages=${totalPages}:isAtPageEnd=${isAtPageEnd}:distanceFromPageEnd=${distanceFromPageEnd}`);
++              }
++            }
++          }
++        } catch (e) {
++          // Ignore errors in position calculation
++        }
++      }
++      
++      // Better approach: if we're at the end of doc and on the first line of a page
++      if (e.key === 'Backspace' && isAtEndOfDoc && totalPages > 1) {
++        const lastCalculatedPages = this.storage.lastCalculatedPageCount || totalPages;
++        
++        console.log(`PAGE_REMOVAL_CHECK:totalPages=${totalPages}:lastCalculatedPages=${lastCalculatedPages}:isAtEndOfDoc=${isAtEndOfDoc}:isAtStartOfPage=${isAtStartOfPage}:currentPageNum=${currentPageNum}`);
++        
++        // Only trigger page removal when calculations show we need fewer pages
++        // Don't use isAtStartOfPage as a trigger - it's unreliable with phantom pages
++        if (lastCalculatedPages < totalPages) {
++          console.log(`PAGE_REMOVAL_TRIGGER:calculated_fewer_pages:from=${totalPages}:to=${lastCalculatedPages}`);
++          
++          // Update page count
++          this.storage.correctPageCount = lastCalculatedPages;
++          
++          // Dispatch decoration update
++          this.editor.view.dispatch(
++            this.editor.view.state.tr.setMeta(pagination_meta_key, true)
++          );
++          
++          // Prevent overflow detection from re-adding the page
++          this.storage.lastDeletionTime = Date.now();
++        }
++      }
++    };
++    
++    targetNode.addEventListener("keyup", backspacePhantomPageHandler);
++    
++    // Track cleanup
++    this.storage.cleanups.push(() => {
++      targetNode.removeEventListener("keyup", backspacePhantomPageHandler);
++    });
++
+     // Initial setup
+     this.editor.view.dispatch(
+       this.editor.view.state.tr.setMeta(pagination_meta_key, true)
+@@ -1235,6 +1495,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+               if (isTypingOrDeleting) {
+                 extensionStorage.lastTypingTime = Date.now();
+                 
++                
+                 const node = extensionStorage.editor.view.dom as HTMLElement;
+                 
+                 // For typing (positive sizeDiff), save cursor position in viewport
+@@ -1267,6 +1528,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                 }
+                 // For deletions that might cause page shrinkage, save scroll position
+                 else if (sizeDiff < 0) {
++                  // Track deletion time
++                  extensionStorage.lastDeletionTime = Date.now();
++                  
+                   // Only save if we haven't already saved for this deletion cycle
+                   if (extensionStorage.offsetFromBottom === undefined) {
+                     const offset = node.scrollHeight - node.clientHeight - node.scrollTop;
+@@ -1337,7 +1601,10 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+             }
+ 
+             // Only update decorations for explicit pagination updates (not normal typing)
+-            if (tr.getMeta(pagination_meta_key)) {
++            const hasPaginationMeta = tr.getMeta(pagination_meta_key);
++            console.log(`PLUGIN_APPLY:hasPaginationMeta=${hasPaginationMeta}:docChanged=${tr.docChanged}`);
++            
++            if (hasPaginationMeta) {
+               // Clear allowUnstableUpdate flag on any decoration refresh to prevent ghost gaps
+               if (extensionStorage.allowUnstableUpdate) {
+                 extensionStorage.allowUnstableUpdate = false;
+@@ -1348,6 +1615,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                 pageOptions,
+                 extensionStorage
+               );
++              console.log(`PLUGIN_APPLY:creating_decorations:pageCount=${extensionStorage.correctPageCount}`);
+               return DecorationSet.create(newState.doc, [...widgetList]);
+             }
+ 
+@@ -1371,6 +1639,7 @@ function createDecoration(
+   pageOptions: PaginationPlusOptions,
+   extensionStorage?: any
+ ): Decoration[] {
++  console.log(`CREATE_DECORATION:called:correctPageCount=${extensionStorage?.correctPageCount || 1}`);
+ 
+   const pageWidget = Decoration.widget(
+     0,

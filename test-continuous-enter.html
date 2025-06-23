@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Continuous Enter Press Test</title>
+    <style>
+        .editor {
+            width: 800px;
+            margin: 40px auto;
+            border: 1px solid #ccc;
+            min-height: 500px;
+        }
+        
+        .info {
+            width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f0f0f0;
+            border-radius: 5px;
+        }
+        
+        .controls {
+            width: 800px;
+            margin: 20px auto;
+            text-align: center;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        .status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h2>Continuous Enter Press Test</h2>
+        <p>This test demonstrates the -7 line buffer for Enter key presses.</p>
+        <p>Instructions:</p>
+        <ol>
+            <li>Click in the editor to focus it</li>
+            <li>Type some content to fill up the page</li>
+            <li>Move cursor to the end of the document</li>
+            <li>Hold down Enter key continuously</li>
+            <li>Watch how pages are added with the -7 line buffer (eager page addition)</li>
+        </ol>
+    </div>
+    
+    <div class="controls">
+        <button onclick="addSampleContent()">Add Sample Content</button>
+        <button onclick="clearContent()">Clear Content</button>
+        <button onclick="moveCursorToEnd()">Move Cursor to End</button>
+    </div>
+    
+    <div class="status" id="status">
+        Pages: <span id="pageCount">1</span> | 
+        Last Enter: <span id="lastEnter">Never</span>
+    </div>
+    
+    <div class="editor" id="editor"></div>
+
+    <script type="module">
+        import { Editor } from 'https://cdn.skypack.dev/@tiptap/core';
+        import StarterKit from 'https://cdn.skypack.dev/@tiptap/starter-kit';
+        import { PaginationPlus } from './dist/index.js';
+
+        let editor;
+
+        window.onload = () => {
+            editor = new Editor({
+                element: document.querySelector('#editor'),
+                extensions: [
+                    StarterKit,
+                    PaginationPlus.configure({
+                        pageHeight: 842,
+                        pageHeaderHeight: 50,
+                        pageGap: 20,
+                        contentPadding: { top: 48, right: 96, bottom: 48, left: 96 },
+                    }),
+                ],
+                content: '<p>Start typing here or click "Add Sample Content" to begin...</p>',
+                onUpdate: ({ editor }) => {
+                    updateStatus();
+                },
+            });
+
+            // Track Enter key presses
+            let lastEnterTime = null;
+            editor.view.dom.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    lastEnterTime = Date.now();
+                    document.getElementById('lastEnter').textContent = new Date().toLocaleTimeString();
+                }
+            });
+
+            // Initial status update
+            updateStatus();
+            
+            // Make functions global for button access
+            window.editor = editor;
+        };
+
+        function updateStatus() {
+            const pageCount = window.editor?.storage?.PaginationPlus?.correctPageCount || 1;
+            document.getElementById('pageCount').textContent = pageCount;
+        }
+
+        window.addSampleContent = () => {
+            const lines = [];
+            for (let i = 0; i < 30; i++) {
+                lines.push(`<p>This is line ${i + 1} of sample content. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>`);
+            }
+            editor.commands.setContent(lines.join(''));
+            updateStatus();
+        };
+
+        window.clearContent = () => {
+            editor.commands.setContent('<p></p>');
+            updateStatus();
+        };
+
+        window.moveCursorToEnd = () => {
+            editor.commands.focus('end');
+        };
+    </script>
+</body>
+</html>

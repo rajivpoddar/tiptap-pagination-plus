@@ -1,0 +1,1107 @@
+diff --git a/demo.html b/demo.html
+index 8b22c88..bbd582a 100644
+--- a/demo.html
++++ b/demo.html
+@@ -152,6 +152,14 @@
+                             setTimeout(() => {
+                                 document.getElementById('loader').classList.add('hidden');
+                                 document.getElementById('editor').classList.remove('hidden');
++                                
++                                // Also try to focus when pagination is ready
++                                setTimeout(() => {
++                                    if (!document.activeElement || !document.activeElement.classList.contains('ProseMirror')) {
++                                        editor.commands.focus('start');
++                                        console.log('🎯 Editor focused from PaginationPlus onReady');
++                                    }
++                                }, 100);
+                             }, 500); // Small delay to ensure everything is fully loaded
+                         }
+                     })
+@@ -230,6 +238,8 @@
+                     <p></p>
+                     
+                     <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem. Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam.</p>
++                    
++                    <p></p>
+                 `,
+                 onReady: () => {
+                     console.log('✅ Editor ready with actual PaginationPlus extension!');
+@@ -237,6 +247,16 @@
+                     console.log('Editor classes:', editor.view.dom.className);
+                     console.log('Editor storage:', editor.storage);
+                     
++                    // Set cursor to the start of the document
++                    editor.commands.setTextSelection(0);
++                    editor.commands.scrollIntoView();
++                    
++                    // Focus with a slight delay to ensure DOM is ready
++                    setTimeout(() => {
++                        editor.commands.focus('start');
++                        console.log('🎯 Editor focused');
++                    }, 100);
++                    
+                     // Hide loader and show editor (fallback in case PaginationPlus onReady doesn't fire)
+                     setTimeout(() => {
+                         const loader = document.getElementById('loader');
+diff --git a/dist/PaginationPlus.js b/dist/PaginationPlus.js
+index be04def..ff33758 100644
+--- a/dist/PaginationPlus.js
++++ b/dist/PaginationPlus.js
+@@ -90,8 +90,6 @@ export const PaginationPlus = Extension.create({
+             initialSetupCompleteTime: 0,
+             // Lock the expected height range for content
+             lockedHeightRange: { min: 0, max: 0 },
+-            // Allow page count updates even when height is unstable (for deletions)
+-            allowUnstableUpdate: false,
+             // Flag to scroll to cursor after pagination (for large paste)
+             scrollToCursorAfterUpdate: false,
+             // Track typing activity to avoid interfering with cursor during active typing
+@@ -105,12 +103,13 @@ export const PaginationPlus = Extension.create({
+             pluginInstanceId: null,
+             // Store editor reference for plugin access
+             editor: null,
+-            // Scroll position preservation for backspace deletions
+-            offsetFromBottom: undefined,
+-            blockScrollIntoView: false,
+-            savedPageCountBeforeDeletion: undefined,
++            // Simpler scroll preservation for deletions at end of document
++            pendingScrollAdjustment: 0,
++            isAtEndOfDoc: false,
+             // Cursor position in viewport for typing scenarios
+             cursorViewportOffset: undefined,
++            // Block remeasure temporarily after backspace at end
++            blockRemeasureUntil: 0,
+         };
+     },
+     onCreate() {
+@@ -118,6 +117,174 @@ export const PaginationPlus = Extension.create({
+         targetNode.classList.add("rm-with-pagination");
+         // Store editor reference for plugin access
+         this.storage.editor = this.editor;
++        // Binary search helper to find minimum page count for a given content height
++        function estimatePages(contentHeight, calcHeight, maxPages = 1000) {
++            let lo = 1, hi = maxPages;
++            while (lo < hi) {
++                const mid = (lo + hi) >>> 1; // binary search
++                if (calcHeight(mid) < contentHeight)
++                    lo = mid + 1;
++                else
++                    hi = mid;
++            }
++            return lo;
++        }
++        // Add keydown/keyup handlers for simpler scroll preservation
++        const handleKeyDown = (event) => {
++            if (event.key === 'Backspace') {
++                const { selection, doc } = this.editor.state;
++                const cursorAtEnd = selection.from >= doc.content.size - 1;
++                if (cursorAtEnd && this.storage.correctPageCount > 1) {
++                    // Store that we're at end of doc for the keyup handler
++                    this.storage.isAtEndOfDoc = true;
++                    // Estimate the line height that will be removed
++                    const estimatedLineHeight = this.options.fontSize * this.options.lineHeight;
++                    this.storage.pendingScrollAdjustment = estimatedLineHeight;
++                    // Block remeasurement for 500ms to prevent fighting
++                    this.storage.blockRemeasureUntil = Date.now() + 500;
++                    console.log('[PaginationPlus] Keydown: Backspace at end detected', {
++                        pageCount: this.storage.correctPageCount,
++                        lineHeight: estimatedLineHeight
++                    });
++                }
++                else {
++                    this.storage.isAtEndOfDoc = false;
++                    this.storage.pendingScrollAdjustment = 0;
++                }
++            }
++        };
++        const handleKeyUp = (event) => {
++            if (event.key === 'Backspace' && this.storage.pendingScrollAdjustment > 0) {
++                // Apply the scroll adjustment after the DOM has updated
++                requestAnimationFrame(() => {
++                    const scrollContainer = targetNode.scrollHeight > targetNode.clientHeight ? targetNode : window;
++                    if (scrollContainer === window) {
++                        window.scrollBy(0, -this.storage.pendingScrollAdjustment);
++                        console.log('[PaginationPlus] Keyup: Applied window scroll adjustment', -this.storage.pendingScrollAdjustment);
++                    }
++                    else {
++                        targetNode.scrollTop = Math.max(0, targetNode.scrollTop - this.storage.pendingScrollAdjustment);
++                        console.log('[PaginationPlus] Keyup: Applied container scroll adjustment', -this.storage.pendingScrollAdjustment);
++                    }
++                    // Check if we need to remove the last page
++                    // Try removing page on first backspace at end
++                    if (this.storage.isAtEndOfDoc && this.storage.correctPageCount > 1) {
++                        requestAnimationFrame(() => {
++                            const currentPageCount = this.storage.correctPageCount;
++                            // Log the initial state
++                            const heightBefore = targetNode.scrollHeight;
++                            console.log('[PaginationPlus] Before hiding pagination:', JSON.stringify({
++                                scrollHeight: heightBefore,
++                                clientHeight: targetNode.clientHeight,
++                                offsetHeight: targetNode.offsetHeight
++                            }, null, 2));
++                            // Measure natural content height by temporarily hiding pagination elements
++                            const paginationElements = targetNode.querySelectorAll(".rm-page-break, .rm-page-header, .rm-page-footer, [data-rm-pagination], #pages");
++                            console.log('[PaginationPlus] Found pagination elements to hide:', paginationElements.length);
++                            // Store original display states and hide elements
++                            const originalStates = new Map();
++                            paginationElements.forEach((el) => {
++                                const element = el;
++                                originalStates.set(element, element.style.display);
++                                element.style.display = 'none';
++                            });
++                            // Force layout recalculation
++                            void targetNode.offsetHeight;
++                            // Now measure the natural content height
++                            const naturalHeight = targetNode.scrollHeight;
++                            console.log('[PaginationPlus] After hiding pagination:', JSON.stringify({
++                                scrollHeight: naturalHeight,
++                                clientHeight: targetNode.clientHeight,
++                                offsetHeight: targetNode.offsetHeight,
++                                difference: heightBefore - naturalHeight
++                            }, null, 2));
++                            // Measure content more accurately by getting all direct children
++                            const children = Array.from(targetNode.children);
++                            let totalContentHeight = 0;
++                            let contentCount = 0;
++                            children.forEach((child) => {
++                                const element = child;
++                                // Skip pagination elements
++                                if (element.classList.contains('rm-page-break') ||
++                                    element.classList.contains('rm-page-header') ||
++                                    element.classList.contains('rm-page-footer') ||
++                                    element.dataset.rmPagination ||
++                                    element.id === 'pages') {
++                                    return;
++                                }
++                                // Get the full height including margins
++                                const styles = window.getComputedStyle(element);
++                                const marginTop = parseFloat(styles.marginTop) || 0;
++                                const marginBottom = parseFloat(styles.marginBottom) || 0;
++                                const rect = element.getBoundingClientRect();
++                                totalContentHeight += rect.height + marginTop + marginBottom;
++                                contentCount++;
++                            });
++                            console.log('[PaginationPlus] Direct content measurement:', JSON.stringify({
++                                totalContentHeight,
++                                contentElementCount: contentCount
++                            }, null, 2));
++                            // Restore pagination elements
++                            originalStates.forEach((display, element) => {
++                                element.style.display = display;
++                            });
++                            // Trust the DOM height you already have - it already includes every
++                            // margin made by the invisible `.page` placeholders.
++                            const actualContentHeight = naturalHeight;
++                            // Use binary search to find required pages based on actual content height
++                            const requiredPages = estimatePages(actualContentHeight, this.storage.calculatePaginatedHeight, this.options.maxPages);
++                            // Let's also log what the calculatePaginatedHeight returns for different page counts
++                            const testResults = [];
++                            for (let i = 1; i <= 6; i++) {
++                                testResults.push({
++                                    pages: i,
++                                    height: this.storage.calculatePaginatedHeight(i)
++                                });
++                            }
++                            console.log('[PaginationPlus] Keyup: page check', JSON.stringify({
++                                naturalHeight,
++                                actualContentHeight,
++                                requiredPages,
++                                currentPageCount,
++                                testResults,
++                                contentMeasurement: {
++                                    totalContentHeight,
++                                    contentElementCount: contentCount
++                                }
++                            }, null, 2));
++                            // Only remove if we clearly have too many pages
++                            if (requiredPages < currentPageCount) {
++                                console.log('[PaginationPlus] Keyup: Removing excess page');
++                                // Update the page count
++                                this.storage.correctPageCount = requiredPages;
++                                // Calculate the new height for the reduced page count
++                                const newHeight = this.storage.calculatePaginatedHeight ?
++                                    this.storage.calculatePaginatedHeight(requiredPages) :
++                                    targetNode.style.height; // Keep current if no function
++                                // Set the height immediately to prevent visual glitch
++                                targetNode.style.height = newHeight + 'px';
++                                // Trigger decoration update
++                                this.editor.view.dispatch(this.editor.view.state.tr.setMeta(pagination_meta_key, true));
++                                // Extend the block to prevent immediate remeasure
++                                this.storage.blockRemeasureUntil = Date.now() + 1000;
++                                // Verify in the background with a delay so the user never notices
++                                this.storage.remeasureContent(300);
++                            }
++                        });
++                    }
++                    // Reset
++                    this.storage.pendingScrollAdjustment = 0;
++                    this.storage.isAtEndOfDoc = false;
++                });
++            }
++        };
++        targetNode.addEventListener('keydown', handleKeyDown);
++        targetNode.addEventListener('keyup', handleKeyUp);
++        // Track cleanup
++        this.storage.cleanups.push(() => {
++            targetNode.removeEventListener('keydown', handleKeyDown);
++            targetNode.removeEventListener('keyup', handleKeyUp);
++        });
+         // Options are available as this.options
+         // Named constants for layout calculations
+         const LAYOUT_CONSTANTS = {
+@@ -594,22 +761,11 @@ export const PaginationPlus = Extension.create({
+                                 naturalHeight <= this.storage.lockedHeightRange.max;
+                             // Update page count if changed
+                             if (pageCount !== this.storage.correctPageCount) {
+-                                // Update if height is stable AND outside locked range, OR if unstable update is allowed
+-                                const shouldUpdate = (!withinLockedRange && isHeightStable) || this.storage.allowUnstableUpdate;
++                                // Update if height is stable AND outside locked range
++                                const shouldUpdate = (!withinLockedRange && isHeightStable);
+                                 if (shouldUpdate) {
+                                     const oldPageCount = this.storage.correctPageCount;
+                                     this.storage.correctPageCount = Math.max(1, pageCount);
+-                                    // Clear the unstable update flag after use
+-                                    this.storage.allowUnstableUpdate = false;
+-                                    // If page count decreased due to deletion, clear scroll protection after update
+-                                    if (pageCount < oldPageCount && this.storage.blockScrollIntoView) {
+-                                        // Delay clearing the block to ensure all scroll operations are complete
+-                                        requestAnimationFrame(() => {
+-                                            requestAnimationFrame(() => {
+-                                                this.storage.blockScrollIntoView = false;
+-                                            });
+-                                        });
+-                                    }
+                                     // Update locked range for new page count
+                                     const tolerance = contentPerPage * 0.5;
+                                     this.storage.lockedHeightRange = {
+@@ -636,46 +792,21 @@ export const PaginationPlus = Extension.create({
+                                     }
+                                 }
+                             }
+-                            else {
+-                                // Clear allowUnstableUpdate flag even if page count didn't change
+-                                // This prevents ghost gaps after large deletes that don't change page count
+-                                if (this.storage.allowUnstableUpdate) {
+-                                    this.storage.allowUnstableUpdate = false;
+-                                }
+-                                // If we had scroll protection active but page count didn't change, clear it
+-                                if (this.storage.blockScrollIntoView && this.storage.offsetFromBottom !== undefined) {
+-                                    // Clean up scroll protection if no page change occurred
+-                                    delete this.storage.offsetFromBottom;
+-                                    delete this.storage.savedPageCountBeforeDeletion;
+-                                    requestAnimationFrame(() => {
+-                                        this.storage.blockScrollIntoView = false;
+-                                    });
+-                                }
+-                            }
+                         }
+                     }
+                 }
+                 // Set paginated height - use the stored correct page count, not the calculated one
+                 const finalPageCount = this.storage.correctPageCount || pageCount;
+                 const paginatedHeight = calculatePaginatedHeight(finalPageCount);
++                console.log('[PaginationPlus] Final page count determination:', JSON.stringify({
++                    calculatedPageCount: pageCount,
++                    storedPageCount: this.storage.correctPageCount,
++                    finalPageCount: finalPageCount,
++                    paginatedHeight: paginatedHeight
++                }, null, 2));
+                 // Apply calculated height
+                 targetNode.style.height = `${paginatedHeight}px`;
+-                // Restore scroll position for backspace deletions to prevent glitch
+-                if (this.storage.offsetFromBottom !== undefined) {
+-                    // Only restore if the page count actually changed
+-                    const pageCountChanged = this.storage.savedPageCountBeforeDeletion !== undefined &&
+-                        finalPageCount !== this.storage.savedPageCountBeforeDeletion;
+-                    if (pageCountChanged) {
+-                        // Page count decreased - restore the distance from bottom
+-                        const newScrollTop = targetNode.scrollHeight - targetNode.clientHeight - this.storage.offsetFromBottom;
+-                        // Ensure the scroll position is valid
+-                        const maxScrollTop = targetNode.scrollHeight - targetNode.clientHeight;
+-                        targetNode.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+-                    }
+-                    // Clean up
+-                    delete this.storage.offsetFromBottom;
+-                    delete this.storage.savedPageCountBeforeDeletion;
+-                }
++                // Scroll restoration is now handled by keydown/keyup handlers
+                 // Restore cursor position in viewport for typing scenarios
+                 if (this.storage.cursorViewportOffset !== undefined) {
+                     requestAnimationFrame(() => {
+@@ -692,16 +823,10 @@ export const PaginationPlus = Extension.create({
+                             targetNode.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+                             // Clean up
+                             delete this.storage.cursorViewportOffset;
+-                            // Clear block after restoration
+-                            requestAnimationFrame(() => {
+-                                this.storage.blockScrollIntoView = false;
+-                            });
+                         }
+                         catch (e) {
+                             // If we can't restore position, fall back to ensuring cursor is visible
+-                            if (!this.storage.blockScrollIntoView) {
+-                                this.editor.commands.scrollIntoView();
+-                            }
++                            this.editor.commands.scrollIntoView();
+                             delete this.storage.cursorViewportOffset;
+                         }
+                     });
+@@ -778,9 +903,7 @@ export const PaginationPlus = Extension.create({
+                     // For large paste or new page creation, use TipTap's scrollIntoView
+                     requestAnimationFrame(() => {
+                         try {
+-                            if (!this.storage.blockScrollIntoView) {
+-                                this.editor.commands.scrollIntoView();
+-                            }
++                            this.editor.commands.scrollIntoView();
+                         }
+                         catch (e) {
+                             // Fallback to restoring saved scroll position
+@@ -799,9 +922,7 @@ export const PaginationPlus = Extension.create({
+                         // Only use scrollIntoView if we're not manually managing cursor position
+                         requestAnimationFrame(() => {
+                             try {
+-                                if (!this.storage.blockScrollIntoView) {
+-                                    this.editor.commands.scrollIntoView();
+-                                }
++                                this.editor.commands.scrollIntoView();
+                             }
+                             catch (e) {
+                                 // Ignore scroll errors
+@@ -829,10 +950,6 @@ export const PaginationPlus = Extension.create({
+                 }
+                 // Reset flags
+                 this.storage.positionSaved = false;
+-                // Only reset blockScrollIntoView if we're not in the middle of handling a deletion
+-                if (this.storage.offsetFromBottom === undefined) {
+-                    this.storage.blockScrollIntoView = false;
+-                }
+                 if (callback) {
+                     callback();
+                 }
+@@ -858,6 +975,11 @@ export const PaginationPlus = Extension.create({
+                 clearTimeout(this.storage.remeasureTimer);
+             }
+             this.storage.remeasureTimer = setTimeout(() => {
++                // Check if we're blocked from remeasuring
++                if (Date.now() < this.storage.blockRemeasureUntil) {
++                    console.log('[PaginationPlus] Remeasure blocked during backspace handling');
++                    return;
++                }
+                 // Reset position saved flag so fresh position is captured
+                 this.storage.positionSaved = false;
+                 // Cancel any pending measurement and start new one
+@@ -1015,6 +1137,18 @@ export const PaginationPlus = Extension.create({
+                                     });
+                                     // Check if cursor is at the end of the document
+                                     const cursorAtEnd = tr.selection.from >= tr.doc.content.size - 1;
++                                    // OPTIMIZATION: Handle Enter at end of document specially
++                                    // DISABLED: This optimization is causing false positives, calculating remaining space incorrectly
++                                    // TODO: Fix the remaining space calculation to account for pagination structure
++                                    /*
++                                    if (isLikelyEnterKey && cursorAtEnd) {
++                                      // Would need proper calculation here that accounts for:
++                                      // - Page gaps
++                                      // - Header/footer heights
++                                      // - Content padding
++                                      // - The complex pagination height structure
++                                    }
++                                    */
+                                     // Don't preserve scroll for Enter key at end of document
+                                     if (!isLikelyEnterKey || !cursorAtEnd) {
+                                         // Get cursor position in viewport
+@@ -1023,37 +1157,81 @@ export const PaginationPlus = Extension.create({
+                                         const cursorOffsetInViewport = coords.top - editorRect.top;
+                                         // Save this offset for restoration after repagination
+                                         extensionStorage.cursorViewportOffset = cursorOffsetInViewport;
+-                                        extensionStorage.blockScrollIntoView = true;
+                                     }
+                                 }
+-                                // For deletions that might cause page shrinkage, save scroll position
++                                // For deletions that might cause page shrinkage
+                                 else if (sizeDiff < 0) {
+-                                    // Only save if we haven't already saved for this deletion cycle
+-                                    if (extensionStorage.offsetFromBottom === undefined) {
+-                                        const offset = node.scrollHeight - node.clientHeight - node.scrollTop;
+-                                        extensionStorage.offsetFromBottom = offset;
+-                                        extensionStorage.blockScrollIntoView = true;
+-                                        // Also save the current page count to detect if it actually changes
+-                                        extensionStorage.savedPageCountBeforeDeletion = extensionStorage.correctPageCount;
++                                    // OPTIMIZATION: Handle Backspace that might remove a page
++                                    const isBackspace = tr.steps.some(step => {
++                                        return step.toJSON && step.toJSON().stepType === 'replace';
++                                    });
++                                    if (isBackspace && extensionStorage.correctPageCount > 1) {
++                                        // Quick check: Are we near a page boundary?
++                                        const pageHeight = pageOptions.pageHeight - pageOptions.pageHeaderHeight * 2;
++                                        const currentPos = tr.selection.from;
++                                        const docSize = tr.doc.content.size;
++                                        // Check if we're near the start OR end of the document
++                                        const nearPageStart = currentPos < 100; // Within 100 chars of document start
++                                        const nearPageEnd = currentPos >= docSize - 10; // At or near the end of document
++                                        // OPTIMIZATION: Handle backspace at end of document (most common case)
++                                        if (nearPageEnd) {
++                                            // Calculate if we're at the beginning of the last page
++                                            const currentPageCount = extensionStorage.correctPageCount;
++                                            const estimatedContentHeight = (currentPageCount - 1) * pageHeight;
++                                            const lastPageContent = node.scrollHeight - estimatedContentHeight;
++                                            // If last page has very little content, we can remove it
++                                            if (lastPageContent < 50) { // Less than 50px of content on last page
++                                                console.log('[PaginationPlus] OPTIMIZATION: Backspace at end detected - removing last page immediately');
++                                                console.log('  Last page content:', JSON.stringify({ height: lastPageContent }, null, 2));
++                                                const oldPageCount = extensionStorage.correctPageCount;
++                                                extensionStorage.correctPageCount = oldPageCount - 1;
++                                                console.log('  Page count change:', JSON.stringify({ from: oldPageCount, to: extensionStorage.correctPageCount }, null, 2));
++                                                // Scroll handling is done by keydown/keyup handlers
++                                                // Trigger immediate decoration update
++                                                requestAnimationFrame(() => {
++                                                    extensionStorage.editor.view.dispatch(extensionStorage.editor.view.state.tr.setMeta(pagination_meta_key, true));
++                                                });
++                                                // Skip expensive measurement
++                                                extensionStorage.remeasureContent(500); // Verify later
++                                            }
++                                        }
++                                        // Original optimization for backspace near start
++                                        else if (nearPageStart) {
++                                            console.log('[PaginationPlus] OPTIMIZATION: Backspace near start detected - removing page immediately');
++                                            console.log('  Cursor info:', JSON.stringify({ position: currentPos }, null, 2));
++                                            // Likely removing content that will eliminate a page
++                                            // Immediately decrement page count
++                                            const oldPageCount = extensionStorage.correctPageCount;
++                                            if (oldPageCount > 1) {
++                                                extensionStorage.correctPageCount = oldPageCount - 1;
++                                                console.log('  Page count change:', JSON.stringify({ from: oldPageCount, to: extensionStorage.correctPageCount }, null, 2));
++                                                // Scroll handling is done by keydown/keyup handlers for backspace at end
++                                                // For backspace near start, we don't need scroll adjustment
++                                                // Trigger immediate decoration update
++                                                requestAnimationFrame(() => {
++                                                    extensionStorage.editor.view.dispatch(extensionStorage.editor.view.state.tr.setMeta(pagination_meta_key, true));
++                                                });
++                                                // Skip expensive measurement
++                                                extensionStorage.remeasureContent(500); // Verify later
++                                            }
++                                        }
+                                     }
+                                 }
+-                                // Don't use scrollIntoView for typing - we'll handle it manually
+-                                if (!extensionStorage.blockScrollIntoView) {
++                                // Let TipTap handle scrollIntoView normally
++                                requestAnimationFrame(() => {
+                                     requestAnimationFrame(() => {
+-                                        requestAnimationFrame(() => {
+-                                            try {
+-                                                const editor = extensionStorage.editor;
+-                                                if (!editor) {
+-                                                    return;
+-                                                }
+-                                                editor.commands.scrollIntoView();
+-                                            }
+-                                            catch (e) {
+-                                                // Ignore scroll errors
++                                        try {
++                                            const editor = extensionStorage.editor;
++                                            if (!editor) {
++                                                return;
+                                             }
+-                                        });
++                                            editor.commands.scrollIntoView();
++                                        }
++                                        catch (e) {
++                                            // Ignore scroll errors
++                                        }
+                                     });
+-                                }
++                                });
+                             }
+                             // Document changed or undo/redo operation
+                             // Update lastDocSize for accurate future calculations
+@@ -1064,10 +1242,6 @@ export const PaginationPlus = Extension.create({
+                                 if (shouldResetLock) {
+                                     extensionStorage.lockedHeightRange = { min: 0, max: 0 };
+                                 }
+-                                // Flag content deletion to bypass height stability requirement
+-                                if (sizeDiff < 0 || isUndoRedo) {
+-                                    extensionStorage.allowUnstableUpdate = true;
+-                                }
+                                 // Handle large paste with faster remeasurement
+                                 if (isLargePaste) {
+                                     // Set flag to scroll to cursor after pagination
+@@ -1090,10 +1264,6 @@ export const PaginationPlus = Extension.create({
+                         }
+                         // Only update decorations for explicit pagination updates (not normal typing)
+                         if (tr.getMeta(pagination_meta_key)) {
+-                            // Clear allowUnstableUpdate flag on any decoration refresh to prevent ghost gaps
+-                            if (extensionStorage.allowUnstableUpdate) {
+-                                extensionStorage.allowUnstableUpdate = false;
+-                            }
+                             const widgetList = createDecoration(newState, pageOptions, extensionStorage);
+                             return DecorationSet.create(newState.doc, [...widgetList]);
+                         }
+diff --git a/src/PaginationPlus.ts b/src/PaginationPlus.ts
+index ad85a1d..2586920 100644
+--- a/src/PaginationPlus.ts
++++ b/src/PaginationPlus.ts
+@@ -113,8 +113,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       initialSetupCompleteTime: 0,
+       // Lock the expected height range for content
+       lockedHeightRange: { min: 0, max: 0 },
+-      // Allow page count updates even when height is unstable (for deletions)
+-      allowUnstableUpdate: false,
+       // Flag to scroll to cursor after pagination (for large paste)
+       scrollToCursorAfterUpdate: false,
+       // Track typing activity to avoid interfering with cursor during active typing
+@@ -128,12 +126,13 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       pluginInstanceId: null as string | null,
+       // Store editor reference for plugin access
+       editor: null as any,
+-      // Scroll position preservation for backspace deletions
+-      offsetFromBottom: undefined as number | undefined,
+-      blockScrollIntoView: false,
+-      savedPageCountBeforeDeletion: undefined as number | undefined,
++      // Simpler scroll preservation for deletions at end of document
++      pendingScrollAdjustment: 0,
++      isAtEndOfDoc: false,
+       // Cursor position in viewport for typing scenarios
+       cursorViewportOffset: undefined as number | undefined,
++      // Block remeasure temporarily after backspace at end
++      blockRemeasureUntil: 0,
+     };
+   },
+ 
+@@ -144,6 +143,217 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+     // Store editor reference for plugin access
+     this.storage.editor = this.editor;
+ 
++    // Binary search helper to find minimum page count for a given content height
++    function estimatePages(
++      contentHeight: number,
++      calcHeight: (p: number) => number,
++      maxPages = 1000
++    ) {
++      let lo = 1, hi = maxPages;
++      while (lo < hi) {
++        const mid = (lo + hi) >>> 1;      // binary search
++        if (calcHeight(mid) < contentHeight) lo = mid + 1;
++        else hi = mid;
++      }
++      return lo;
++    }
++
++    // Add keydown/keyup handlers for simpler scroll preservation
++    const handleKeyDown = (event: KeyboardEvent) => {
++      if (event.key === 'Backspace') {
++        const { selection, doc } = this.editor.state;
++        const cursorAtEnd = selection.from >= doc.content.size - 1;
++        
++        if (cursorAtEnd && this.storage.correctPageCount > 1) {
++          // Store that we're at end of doc for the keyup handler
++          this.storage.isAtEndOfDoc = true;
++          
++          // Estimate the line height that will be removed
++          const estimatedLineHeight = this.options.fontSize * this.options.lineHeight;
++          this.storage.pendingScrollAdjustment = estimatedLineHeight;
++          
++          // Block remeasurement for 500ms to prevent fighting
++          this.storage.blockRemeasureUntil = Date.now() + 500;
++          
++          console.log('[PaginationPlus] Keydown: Backspace at end detected', {
++            pageCount: this.storage.correctPageCount,
++            lineHeight: estimatedLineHeight
++          });
++        } else {
++          this.storage.isAtEndOfDoc = false;
++          this.storage.pendingScrollAdjustment = 0;
++        }
++      }
++    };
++    
++    const handleKeyUp = (event: KeyboardEvent) => {
++      if (event.key === 'Backspace' && this.storage.pendingScrollAdjustment > 0) {
++        // Apply the scroll adjustment after the DOM has updated
++        requestAnimationFrame(() => {
++          const scrollContainer = targetNode.scrollHeight > targetNode.clientHeight ? targetNode : window;
++          
++          if (scrollContainer === window) {
++            window.scrollBy(0, -this.storage.pendingScrollAdjustment);
++            console.log('[PaginationPlus] Keyup: Applied window scroll adjustment', -this.storage.pendingScrollAdjustment);
++          } else {
++            targetNode.scrollTop = Math.max(0, targetNode.scrollTop - this.storage.pendingScrollAdjustment);
++            console.log('[PaginationPlus] Keyup: Applied container scroll adjustment', -this.storage.pendingScrollAdjustment);
++          }
++          
++          // Check if we need to remove the last page
++          // Try removing page on first backspace at end
++          if (this.storage.isAtEndOfDoc && this.storage.correctPageCount > 1) {
++            requestAnimationFrame(() => {
++              const currentPageCount = this.storage.correctPageCount;
++              
++              // Log the initial state
++              const heightBefore = targetNode.scrollHeight;
++              console.log('[PaginationPlus] Before hiding pagination:', JSON.stringify({
++                scrollHeight: heightBefore,
++                clientHeight: targetNode.clientHeight,
++                offsetHeight: targetNode.offsetHeight
++              }, null, 2));
++              
++              // Measure natural content height by temporarily hiding pagination elements
++              const paginationElements = targetNode.querySelectorAll(
++                ".rm-page-break, .rm-page-header, .rm-page-footer, [data-rm-pagination], #pages"
++              );
++              
++              console.log('[PaginationPlus] Found pagination elements to hide:', paginationElements.length);
++              
++              // Store original display states and hide elements
++              const originalStates = new Map<HTMLElement, string>();
++              paginationElements.forEach((el) => {
++                const element = el as HTMLElement;
++                originalStates.set(element, element.style.display);
++                element.style.display = 'none';
++              });
++              
++              // Force layout recalculation
++              void targetNode.offsetHeight;
++              
++              // Now measure the natural content height
++              const naturalHeight = targetNode.scrollHeight;
++              
++              console.log('[PaginationPlus] After hiding pagination:', JSON.stringify({
++                scrollHeight: naturalHeight,
++                clientHeight: targetNode.clientHeight,
++                offsetHeight: targetNode.offsetHeight,
++                difference: heightBefore - naturalHeight
++              }, null, 2));
++              
++              // Measure content more accurately by getting all direct children
++              const children = Array.from(targetNode.children);
++              let totalContentHeight = 0;
++              let contentCount = 0;
++              
++              children.forEach((child) => {
++                const element = child as HTMLElement;
++                // Skip pagination elements
++                if (element.classList.contains('rm-page-break') || 
++                    element.classList.contains('rm-page-header') || 
++                    element.classList.contains('rm-page-footer') ||
++                    element.dataset.rmPagination ||
++                    element.id === 'pages') {
++                  return;
++                }
++                
++                // Get the full height including margins
++                const styles = window.getComputedStyle(element);
++                const marginTop = parseFloat(styles.marginTop) || 0;
++                const marginBottom = parseFloat(styles.marginBottom) || 0;
++                const rect = element.getBoundingClientRect();
++                totalContentHeight += rect.height + marginTop + marginBottom;
++                contentCount++;
++              });
++              
++              console.log('[PaginationPlus] Direct content measurement:', JSON.stringify({
++                totalContentHeight,
++                contentElementCount: contentCount
++              }, null, 2));
++              
++              // Restore pagination elements
++              originalStates.forEach((display, element) => {
++                element.style.display = display;
++              });
++              
++              // Trust the DOM height you already have - it already includes every
++              // margin made by the invisible `.page` placeholders.
++              const actualContentHeight = naturalHeight;
++              
++              // Use binary search to find required pages based on actual content height
++              const requiredPages = estimatePages(
++                actualContentHeight,
++                this.storage.calculatePaginatedHeight!,
++                this.options.maxPages
++              );
++              
++              // Let's also log what the calculatePaginatedHeight returns for different page counts
++              const testResults = [];
++              for (let i = 1; i <= 6; i++) {
++                testResults.push({
++                  pages: i,
++                  height: this.storage.calculatePaginatedHeight!(i)
++                });
++              }
++              
++              console.log('[PaginationPlus] Keyup: page check', JSON.stringify({
++                naturalHeight,
++                actualContentHeight,
++                requiredPages,
++                currentPageCount,
++                testResults,
++                contentMeasurement: {
++                  totalContentHeight,
++                  contentElementCount: contentCount
++                }
++              }, null, 2));
++              
++              // Only remove if we clearly have too many pages
++              if (requiredPages < currentPageCount) {
++                console.log('[PaginationPlus] Keyup: Removing excess page');
++                
++                // Update the page count
++                this.storage.correctPageCount = requiredPages;
++                
++                // Calculate the new height for the reduced page count
++                const newHeight = this.storage.calculatePaginatedHeight ? 
++                  this.storage.calculatePaginatedHeight(requiredPages) : 
++                  targetNode.style.height; // Keep current if no function
++                
++                // Set the height immediately to prevent visual glitch
++                targetNode.style.height = newHeight + 'px';
++                
++                // Trigger decoration update
++                this.editor.view.dispatch(
++                  this.editor.view.state.tr.setMeta(pagination_meta_key, true)
++                );
++                
++                // Extend the block to prevent immediate remeasure
++                this.storage.blockRemeasureUntil = Date.now() + 1000;
++                
++                // Verify in the background with a delay so the user never notices
++                this.storage.remeasureContent(300);
++              }
++            });
++          }
++          
++          // Reset
++          this.storage.pendingScrollAdjustment = 0;
++          this.storage.isAtEndOfDoc = false;
++        });
++      }
++    };
++    
++    targetNode.addEventListener('keydown', handleKeyDown);
++    targetNode.addEventListener('keyup', handleKeyUp);
++    
++    // Track cleanup
++    this.storage.cleanups.push(() => {
++      targetNode.removeEventListener('keydown', handleKeyDown);
++      targetNode.removeEventListener('keyup', handleKeyUp);
++    });
++
+     // Options are available as this.options
+ 
+     // Named constants for layout calculations
+@@ -740,8 +950,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+ 
+               // Update page count if changed
+               if (pageCount !== this.storage.correctPageCount) {
+-                // Update if height is stable AND outside locked range, OR if unstable update is allowed
+-                const shouldUpdate = (!withinLockedRange && isHeightStable) || this.storage.allowUnstableUpdate;
++                // Update if height is stable AND outside locked range
++                const shouldUpdate = (!withinLockedRange && isHeightStable);
+                 
+                 
+                 if (shouldUpdate) {
+@@ -749,18 +959,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                   this.storage.correctPageCount = Math.max(1, pageCount);
+ 
+ 
+-                  // Clear the unstable update flag after use
+-                  this.storage.allowUnstableUpdate = false;
+                   
+-                  // If page count decreased due to deletion, clear scroll protection after update
+-                  if (pageCount < oldPageCount && this.storage.blockScrollIntoView) {
+-                    // Delay clearing the block to ensure all scroll operations are complete
+-                    requestAnimationFrame(() => {
+-                      requestAnimationFrame(() => {
+-                        this.storage.blockScrollIntoView = false;
+-                      });
+-                    });
+-                  }
+ 
+                   // Update locked range for new page count
+                   const tolerance = contentPerPage * 0.5;
+@@ -791,22 +990,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                     });
+                   }
+                 }
+-              } else {
+-                // Clear allowUnstableUpdate flag even if page count didn't change
+-                // This prevents ghost gaps after large deletes that don't change page count
+-                if (this.storage.allowUnstableUpdate) {
+-                  this.storage.allowUnstableUpdate = false;
+-                }
+-                
+-                // If we had scroll protection active but page count didn't change, clear it
+-                if (this.storage.blockScrollIntoView && this.storage.offsetFromBottom !== undefined) {
+-                  // Clean up scroll protection if no page change occurred
+-                  delete this.storage.offsetFromBottom;
+-                  delete this.storage.savedPageCountBeforeDeletion;
+-                  requestAnimationFrame(() => {
+-                    this.storage.blockScrollIntoView = false;
+-                  });
+-                }
+               }
+             }
+           }
+@@ -815,29 +998,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         // Set paginated height - use the stored correct page count, not the calculated one
+         const finalPageCount = this.storage.correctPageCount || pageCount;
+         const paginatedHeight = calculatePaginatedHeight(finalPageCount);
++        
++        console.log('[PaginationPlus] Final page count determination:', JSON.stringify({
++          calculatedPageCount: pageCount,
++          storedPageCount: this.storage.correctPageCount,
++          finalPageCount: finalPageCount,
++          paginatedHeight: paginatedHeight
++        }, null, 2));
+ 
+         // Apply calculated height
+         targetNode.style.height = `${paginatedHeight}px`;
+         
+-        // Restore scroll position for backspace deletions to prevent glitch
+-        if (this.storage.offsetFromBottom !== undefined) {
+-          // Only restore if the page count actually changed
+-          const pageCountChanged = this.storage.savedPageCountBeforeDeletion !== undefined &&
+-                                  finalPageCount !== this.storage.savedPageCountBeforeDeletion;
+-          
+-          if (pageCountChanged) {
+-            // Page count decreased - restore the distance from bottom
+-            const newScrollTop = targetNode.scrollHeight - targetNode.clientHeight - this.storage.offsetFromBottom;
+-            
+-            // Ensure the scroll position is valid
+-            const maxScrollTop = targetNode.scrollHeight - targetNode.clientHeight;
+-            targetNode.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+-          }
+-          
+-          // Clean up
+-          delete this.storage.offsetFromBottom;
+-          delete this.storage.savedPageCountBeforeDeletion;
+-        }
++        // Scroll restoration is now handled by keydown/keyup handlers
+         
+         // Restore cursor position in viewport for typing scenarios
+         if (this.storage.cursorViewportOffset !== undefined) {
+@@ -860,15 +1032,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+               
+               // Clean up
+               delete this.storage.cursorViewportOffset;
+-              // Clear block after restoration
+-              requestAnimationFrame(() => {
+-                this.storage.blockScrollIntoView = false;
+-              });
+             } catch (e) {
+               // If we can't restore position, fall back to ensuring cursor is visible
+-              if (!this.storage.blockScrollIntoView) {
+-                this.editor.commands.scrollIntoView();
+-              }
++              this.editor.commands.scrollIntoView();
+               delete this.storage.cursorViewportOffset;
+             }
+           });
+@@ -974,9 +1140,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+           // For large paste or new page creation, use TipTap's scrollIntoView
+           requestAnimationFrame(() => {
+             try {
+-              if (!this.storage.blockScrollIntoView) {
+-                this.editor.commands.scrollIntoView();
+-              }
++              this.editor.commands.scrollIntoView();
+             } catch (e) {
+               // Fallback to restoring saved scroll position
+               targetNode.scrollTop = savedScrollTop;
+@@ -994,9 +1158,7 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+             // Only use scrollIntoView if we're not manually managing cursor position
+             requestAnimationFrame(() => {
+               try {
+-                if (!this.storage.blockScrollIntoView) {
+-                  this.editor.commands.scrollIntoView();
+-                }
++                this.editor.commands.scrollIntoView();
+               } catch (e) {
+                 // Ignore scroll errors
+               }
+@@ -1027,10 +1189,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+         // Reset flags
+         this.storage.positionSaved = false;
+         
+-        // Only reset blockScrollIntoView if we're not in the middle of handling a deletion
+-        if (this.storage.offsetFromBottom === undefined) {
+-          this.storage.blockScrollIntoView = false;
+-        }
+ 
+         if (callback) {
+           callback();
+@@ -1061,6 +1219,12 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+       }
+ 
+       this.storage.remeasureTimer = setTimeout(() => {
++        // Check if we're blocked from remeasuring
++        if (Date.now() < this.storage.blockRemeasureUntil) {
++          console.log('[PaginationPlus] Remeasure blocked during backspace handling');
++          return;
++        }
++        
+         // Reset position saved flag so fresh position is captured
+         this.storage.positionSaved = false;
+ 
+@@ -1251,6 +1415,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                   // Check if cursor is at the end of the document
+                   const cursorAtEnd = tr.selection.from >= tr.doc.content.size - 1;
+                   
++                  // OPTIMIZATION: Handle Enter at end of document specially
++                  // DISABLED: This optimization is causing false positives, calculating remaining space incorrectly
++                  // TODO: Fix the remaining space calculation to account for pagination structure
++                  /*
++                  if (isLikelyEnterKey && cursorAtEnd) {
++                    // Would need proper calculation here that accounts for:
++                    // - Page gaps
++                    // - Header/footer heights  
++                    // - Content padding
++                    // - The complex pagination height structure
++                  }
++                  */
+                   
+                   // Don't preserve scroll for Enter key at end of document
+                   if (!isLikelyEnterKey || !cursorAtEnd) {
+@@ -1262,39 +1438,100 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                     
+                     // Save this offset for restoration after repagination
+                     extensionStorage.cursorViewportOffset = cursorOffsetInViewport;
+-                    extensionStorage.blockScrollIntoView = true;
+                   }
+                 }
+-                // For deletions that might cause page shrinkage, save scroll position
++                // For deletions that might cause page shrinkage
+                 else if (sizeDiff < 0) {
+-                  // Only save if we haven't already saved for this deletion cycle
+-                  if (extensionStorage.offsetFromBottom === undefined) {
+-                    const offset = node.scrollHeight - node.clientHeight - node.scrollTop;
+-                    extensionStorage.offsetFromBottom = offset;
+-                    extensionStorage.blockScrollIntoView = true;
++                  // OPTIMIZATION: Handle Backspace that might remove a page
++                  const isBackspace = tr.steps.some(step => {
++                    return step.toJSON && step.toJSON().stepType === 'replace';
++                  });
++                  
++                  if (isBackspace && extensionStorage.correctPageCount > 1) {
++                    // Quick check: Are we near a page boundary?
++                    const pageHeight = pageOptions.pageHeight - pageOptions.pageHeaderHeight * 2;
++                    const currentPos = tr.selection.from;
++                    const docSize = tr.doc.content.size;
++                    
++                    // Check if we're near the start OR end of the document
++                    const nearPageStart = currentPos < 100; // Within 100 chars of document start
++                    const nearPageEnd = currentPos >= docSize - 10; // At or near the end of document
+                     
+-                    // Also save the current page count to detect if it actually changes
+-                    extensionStorage.savedPageCountBeforeDeletion = extensionStorage.correctPageCount;
++                    // OPTIMIZATION: Handle backspace at end of document (most common case)
++                    if (nearPageEnd) {
++                      // Calculate if we're at the beginning of the last page
++                      const currentPageCount = extensionStorage.correctPageCount;
++                      const estimatedContentHeight = (currentPageCount - 1) * pageHeight;
++                      const lastPageContent = node.scrollHeight - estimatedContentHeight;
++                      
++                      // If last page has very little content, we can remove it
++                      if (lastPageContent < 50) { // Less than 50px of content on last page
++                        console.log('[PaginationPlus] OPTIMIZATION: Backspace at end detected - removing last page immediately');
++                        console.log('  Last page content:', JSON.stringify({ height: lastPageContent }, null, 2));
++                        
++                        const oldPageCount = extensionStorage.correctPageCount;
++                        extensionStorage.correctPageCount = oldPageCount - 1;
++                        
++                        console.log('  Page count change:', JSON.stringify({ from: oldPageCount, to: extensionStorage.correctPageCount }, null, 2));
++                        
++                        // Scroll handling is done by keydown/keyup handlers
++                        
++                        // Trigger immediate decoration update
++                        requestAnimationFrame(() => {
++                          extensionStorage.editor.view.dispatch(
++                            extensionStorage.editor.view.state.tr.setMeta(pagination_meta_key, true)
++                          );
++                        });
++                        
++                        // Skip expensive measurement
++                        extensionStorage.remeasureContent(500); // Verify later
++                      }
++                    }
++                    // Original optimization for backspace near start
++                    else if (nearPageStart) {
++                      console.log('[PaginationPlus] OPTIMIZATION: Backspace near start detected - removing page immediately');
++                      console.log('  Cursor info:', JSON.stringify({ position: currentPos }, null, 2));
++                      
++                      // Likely removing content that will eliminate a page
++                      // Immediately decrement page count
++                      const oldPageCount = extensionStorage.correctPageCount;
++                      if (oldPageCount > 1) {
++                        extensionStorage.correctPageCount = oldPageCount - 1;
++                        
++                        console.log('  Page count change:', JSON.stringify({ from: oldPageCount, to: extensionStorage.correctPageCount }, null, 2));
++                        
++                        // Scroll handling is done by keydown/keyup handlers for backspace at end
++                        // For backspace near start, we don't need scroll adjustment
++                        
++                        // Trigger immediate decoration update
++                        requestAnimationFrame(() => {
++                          extensionStorage.editor.view.dispatch(
++                            extensionStorage.editor.view.state.tr.setMeta(pagination_meta_key, true)
++                          );
++                        });
++                        
++                        // Skip expensive measurement
++                        extensionStorage.remeasureContent(500); // Verify later
++                      }
++                    }
+                   }
+                 }
+                 
+-                // Don't use scrollIntoView for typing - we'll handle it manually
+-                if (!extensionStorage.blockScrollIntoView) {
++                // Let TipTap handle scrollIntoView normally
++                requestAnimationFrame(() => {
+                   requestAnimationFrame(() => {
+-                    requestAnimationFrame(() => {
+-                      try {
+-                        const editor = extensionStorage.editor;
+-                        if (!editor) {
+-                          return;
+-                        }
+-                        
+-                        editor.commands.scrollIntoView();
+-                      } catch (e) {
+-                        // Ignore scroll errors
++                    try {
++                      const editor = extensionStorage.editor;
++                      if (!editor) {
++                        return;
+                       }
+-                    });
++                      
++                      editor.commands.scrollIntoView();
++                    } catch (e) {
++                      // Ignore scroll errors
++                    }
+                   });
+-                }
++                });
+               }
+               
+               // Document changed or undo/redo operation
+@@ -1311,10 +1548,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+                   extensionStorage.lockedHeightRange = { min: 0, max: 0 };
+                 }
+                 
+-                // Flag content deletion to bypass height stability requirement
+-                if (sizeDiff < 0 || isUndoRedo) {
+-                  extensionStorage.allowUnstableUpdate = true;
+-                }
+                 
+                 // Handle large paste with faster remeasurement
+                 if (isLargePaste) {
+@@ -1338,10 +1571,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
+ 
+             // Only update decorations for explicit pagination updates (not normal typing)
+             if (tr.getMeta(pagination_meta_key)) {
+-              // Clear allowUnstableUpdate flag on any decoration refresh to prevent ghost gaps
+-              if (extensionStorage.allowUnstableUpdate) {
+-                extensionStorage.allowUnstableUpdate = false;
+-              }
+               
+               const widgetList = createDecoration(
+                 newState,

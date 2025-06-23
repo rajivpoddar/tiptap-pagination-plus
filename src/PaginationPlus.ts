@@ -296,9 +296,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         -webkit-user-select: none;
         /* Dynamic height will be set via CSS variable */
         height: var(--page-break-height, 200px);
-        /* Debug visualization */
-        border: 1px dashed rgba(255, 0, 0, 0.3);
-        background: rgba(255, 0, 0, 0.05);
       }
     `;
     document.head.appendChild(style);
@@ -387,11 +384,8 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
     
     // Update page break heights dynamically
     const updatePageBreakHeights = async () => {
-      console.log('[PageBreak Height] updatePageBreakHeights called');
-      
       // Prevent recursive calls
       if (this.storage.isUpdatingPageBreaks) {
-        console.log('[PageBreak Height] Already updating, skipping');
         return;
       }
       
@@ -403,15 +397,11 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
         
         // Find all page break elements in the DOM
         let pageBreakElements = targetNode.querySelectorAll('.page-break-node');
-        console.log('[PageBreak Height] Found page break elements:', pageBreakElements.length);
         
         // Also check for other selectors the PageBreak might use
         const altPageBreakElements = targetNode.querySelectorAll('[data-page-break="true"], .tiptap-page-break, div[data-page-break]');
-        console.log('[PageBreak Height] Alternative selectors found:', altPageBreakElements.length);
         
-        // Debug: log what elements we do find
         if (pageBreakElements.length === 0 && altPageBreakElements.length > 0) {
-          console.log('[PageBreak Height] Using alternative selector elements');
           // Use the alternative selector results
           pageBreakElements = altPageBreakElements;
         }
@@ -444,23 +434,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           const spaceUsedOnPage = relativeTop - pageStartY;
           const spaceLeftOnPage = pageEndY - relativeTop;
           
-          // Debug logging
-          console.log('[PageBreak Debug]', JSON.stringify({
-            pageBreakIndex: index,
-            pageHeight: pageHeight,
-            headerHeight: headerHeight,
-            contentHeight: contentHeight,
-            lineHeight: lineHeight,
-            relativeTop: relativeTop,
-            currentPage: currentPage,
-            pageStartY: pageStartY,
-            pageEndY: pageEndY,
-            spaceUsedOnPage: spaceUsedOnPage,
-            spaceLeftOnPage: spaceLeftOnPage,
-            rectTop: rect.top,
-            containerTop: containerRect.top,
-            scrollTop: targetNode.scrollTop
-          }));
           
           // The page break should fill the entire remaining space on the current page
           // to push ALL following content to the next page
@@ -478,11 +451,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
           let lines = Math.ceil(requiredHeight / lineHeight);
           let testHeight = lines * lineHeight;
           
-          console.log('[PageBreak Debug] Initial calculation:', JSON.stringify({
-            requiredHeight: requiredHeight,
-            lines: lines,
-            testHeight: testHeight
-          }));
           
           // Use mathematical approach to calculate exact height needed
           
@@ -501,12 +469,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             const targetPage = currentPage + 1;
             const targetPageStartY = targetPage * pageHeight + headerHeight;
             
-            console.log('[PageBreak Debug] Next element initial position:', JSON.stringify({
-              element: nextElement.tagName,
-              initialTop: initialNextTop,
-              targetPage: targetPage,
-              targetPageStartY: targetPageStartY
-            }));
             
             // Use O(1) mathematical calculation instead of iterative approach
             // Step 1: Set page break to minimum height to remove previous influence
@@ -533,11 +495,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               })
               .sort((a, b) => a - b); // 0-based page order
             
-            console.log('[PageBreak Debug] Visual page detection:', JSON.stringify({
-              totalHeaders: pageHeaders.length,
-              pageTops: pageTops,
-              nextElementTop: nextTop
-            }));
             
             // Find which page the next content element currently lands on
             let currentContentPageIndex = 0;
@@ -558,40 +515,18 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               // Target page doesn't exist yet - this shouldn't happen in normal operation
               // Fall back to mathematical calculation
               actualTargetPageStart = targetPage * pageHeight + headerHeight;
-              console.log('[PageBreak Debug] Target page header not found, using mathematical fallback');
             }
             
-            console.log('[PageBreak Debug] Visual target calculation:', JSON.stringify({
-              nextTop: nextTop,
-              currentContentPageIndex: currentContentPageIndex,
-              targetPageIndex: targetPageIndex,
-              actualTargetPageStart: actualTargetPageStart,
-              pageTops: pageTops
-            }));
             
             const currentOffsetWithinPage = nextTop - (currentPage * pageHeight + headerHeight);
             const deltaNeeded = actualTargetPageStart - nextTop;
             
-            console.log('[PageBreak Debug] Mathematical calculation:', JSON.stringify({
-              nextTop: nextTop,
-              currentPage: currentPage,
-              targetPage: targetPage,
-              currentPageStart: currentPage * pageHeight + headerHeight,
-              targetPageStartY: targetPageStartY,
-              currentOffsetWithinPage: currentOffsetWithinPage,
-              deltaNeeded: deltaNeeded,
-              spaceLeftOnPage: spaceLeftOnPage,
-              pageBreakRect: pageBreakEl.getBoundingClientRect(),
-              containerRect: containerRect,
-              scrollTop: targetNode.scrollTop
-            }));
             
             let finalHeight;
             if (deltaNeeded <= 0) {
               // Content is already on or past the target page
               // Use minimum height to maintain the page break node
               finalHeight = lineHeight;
-              console.log('[PageBreak Debug] Content already on target page, using minimum height:', finalHeight);
             } else {
               // Calculate exact height needed - deltaNeeded is the direct distance
               // No need to add spaceLeftOnPage as deltaNeeded already accounts for it
@@ -599,27 +534,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               const linesNeeded = Math.ceil(exactHeight / lineHeight);
               finalHeight = linesNeeded * lineHeight;
               
-              console.log('[PageBreak Debug] Calculated exact height:', JSON.stringify({
-                exactHeight: exactHeight,
-                linesNeeded: linesNeeded,
-                finalHeight: finalHeight,
-                
-                // Debug the logic:
-                // We want to push content from nextTop (239) to targetPageStartY (892)
-                // Current logic: finalHeight = spaceLeftOnPage + deltaNeeded  
-                // spaceLeftOnPage = 573 (space remaining on current page)
-                // deltaNeeded = 653 (distance from current pos to target)
-                // finalHeight = 573 + 653 = 1226 (seems like double counting?)
-                
-                logicCheck: {
-                  assumption: "Page break height should push content exactly to target position",
-                  currentContentPos: nextTop,
-                  targetPos: targetPageStartY,
-                  directDelta: targetPageStartY - nextTop,
-                  ourCalculation: exactHeight,
-                  difference: exactHeight - (targetPageStartY - nextTop)
-                }
-              }));
             }
             
             // Step 4: Set the calculated height
@@ -655,21 +569,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
             const atStartOfPage = Math.abs(offsetFromPageStart) <= tolerancePx;
             const verifyOffsetWithinPage = offsetFromPageStart; // For binary search compatibility
             
-            console.log('[PageBreak Debug] Visual verification:', JSON.stringify({
-              finalHeight: finalHeight,
-              verifyTop: verifyTop,
-              actualPageIndex: actualPageIndex,
-              expectedPageIndex: targetPageIndex,
-              actualPageStart: actualPageStart,
-              offsetFromPageStart: offsetFromPageStart,
-              tolerancePx: tolerancePx,
-              atStartOfPage: atStartOfPage,
-              pageCorrect: actualPageIndex === targetPageIndex
-            }));
             
             // Step 6: Optional binary search refinement for precision
             if (!atStartOfPage || actualPageIndex !== targetPageIndex) {
-              console.log('[PageBreak Debug] Content not at target page start, applying binary search refinement...');
               
               let minHeight = Math.max(lineHeight, finalHeight - lineHeight);
               let maxHeight = finalHeight + lineHeight;
@@ -726,16 +628,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                   maxHeight = midHeight;
                 }
                 
-                console.log('[PageBreak Debug] Binary search iteration', binaryIter + 1, JSON.stringify({
-                  midHeight: midHeight,
-                  testPageIndex: testPageIndex,
-                  expectedPageIndex: targetPageIndex,
-                  testOffset: testOffset,
-                  distance: distance,
-                  pageCorrect: pageCorrect,
-                  minHeight: minHeight,
-                  maxHeight: maxHeight
-                }));
                 
                 // Early exit if we're close enough and on the right page
                 if (pageCorrect && distance <= tolerancePx) break;
@@ -743,11 +635,9 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
               
               finalHeight = bestHeight;
               pageBreakEl.style.setProperty('--page-break-height', `${finalHeight}px`);
-              console.log('[PageBreak Debug] Binary search complete, final height:', finalHeight);
             }
             
           } else {
-            console.log('[PageBreak Debug] No next element found, using fallback height');
             // No next element - just fill the remaining space on current page
             const fallbackHeight = Math.ceil(spaceLeftOnPage / lineHeight) * lineHeight;
             pageBreakEl.style.setProperty('--page-break-height', `${fallbackHeight}px`);
@@ -1788,7 +1678,6 @@ export const PaginationPlus = Extension.create<PaginationPlusOptions>({
                       (node: any) => node.type.name === 'pageBreak'
                     );
                     if (hasPageBreaks) {
-                      console.log('[PageBreak Height] Content changed with page breaks, scheduling height update');
                       extensionStorage.updatePageBreakHeights();
                     }
                   });
